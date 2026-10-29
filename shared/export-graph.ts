@@ -68,6 +68,13 @@ function layerChain(c: MediaClip, m: MediaItem, W: number, H: number, fps: numbe
     f.push(`scale=w='2*trunc(${n(base.w)}*${s}/2)':h='2*trunc(${n(base.h)}*${s}/2)':eval=frame`);
   }
   f.push('format=yuva420p');
+  if (a.scale !== b.scale) {
+    // Размер кадра меняется каждый кадр, а поворот, затухание и прозрачность в новых FFmpeg
+    // так не умеют. Кладём слой на прозрачный холст постоянного размера по центру.
+    const smax = Math.max(a.scale, b.scale);
+    const pw = Math.max(2, Math.ceil((base.w * smax) / 2) * 2), ph = Math.max(2, Math.ceil((base.h * smax) / 2) * 2);
+    f.push(`pad=w=${pw}:h=${ph}:x='(ow-iw)/2':y='(oh-ih)/2':color=black@0:eval=frame`);
+  }
   if (a.rotation || b.rotation) {
     const smax = Math.max(a.scale, b.scale);
     const diag = even(Math.hypot(base.w * smax, base.h * smax));
