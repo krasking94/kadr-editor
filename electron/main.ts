@@ -1,5 +1,5 @@
 // Главный процесс «Кадра»: окно, доступ к файлам, FFmpeg, ИИ и MCP.
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, shell, screen } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, screen } from 'electron';
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
@@ -10,7 +10,9 @@ import { projectDuration } from '../shared/timeline';
 import { FFMPEG, ffmpegAvailable, probe, thumbnails, waveform, detectSilence, detectScenes, hardwareEncoders, run } from './ffmpeg';
 import { getSettings, setSettings, setSecret, secretStatus } from './settings';
 import { attachWindow, notify } from './bridge';
-import { chat, listModels, resetSession, stopAi, transcribeFile } from './ai';
+import { chat, complete, listModels, resetSession, stopAi, transcribeFile } from './ai';
+import { audioSnippet, cancelProcess, measureLoudness, processClip, type ProcessKind } from './process';
+import { checkForUpdates, downloadUpdate, installUpdate, updateState } from './updater';
 import { clientStatus, mcpServerState, startMcpServer, stopMcpServer, syncClients } from './mcp';
 import { generateImage, generateMusic, generateSoundEffect, generateSpeech, listVoices } from './generate';
 import { bridgeSelfTest, connectClaudeDesktop, desktopEntry, desktopStatus } from './desktop-link';
@@ -39,6 +41,7 @@ const MIME: Record<string, string> = {
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac', '.opus': 'audio/ogg',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp', '.svg': 'image/svg+xml',
   '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff2': 'font/woff2',
+  '.wasm': 'application/wasm', '.js': 'text/javascript', '.tflite': 'application/octet-stream',
 };
 
 // Отдаёт локальные файлы окну с поддержкой перемотки (Range-запросы)
@@ -57,11 +60,11 @@ function registerMediaProtocol() {
       const stream = Readable.toWeb(createReadStream(path, { start, end })) as ReadableStream;
       return new Response(stream, {
         status: 206,
-        headers: { 'content-type': type, 'content-length': String(end - start + 1), 'content-range': `bytes ${start}-${end}/${size}`, 'accept-ranges': 'bytes' },
+        headers: { 'content-type': type, 'content-length': String(end - start + 1), 'content-range': `bytes ${start}-${end}/${size}`, 'accept-ranges': 'bytes', 'access-control-allow-origin': '*' },
       });
     }
     const stream = Readable.toWeb(createReadStream(path)) as ReadableStream;
-    return new Response(stream, { headers: { 'content-type': type, 'content-length': String(size), 'accept-ranges': 'bytes' } });
+    return new Response(stream, { headers: { 'content-type': type, 'content-length': String(size), 'accept-ranges': 'bytes', 'access-control-allow-origin': '*' } });
   });
 }
 
@@ -119,7 +122,21 @@ app.whenReady().then(async () => {
   const s = getSettings();
   if (s.mcp.serverEnabled) await startMcpServer(s.mcp.port);
   syncClients(s.mcp.clients).catch(() => undefined);
+  // Запись экрана: окно программы само выбирает, какой экран или окно записывать
+  session.defaultSession.setDisplayMediaRequestHandler(async (_req, cb) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+      const src = sources.find(x => x.id === chosenScreen) || sources.find(x => x.id.startsWith('screen')) || sources[0];
+      if (!src) { cb({}); return; }
+      cb({ video: src, ...(process.platform === 'win32' && captureAudio ? { audio: 'loopback' as const } : {}) });
+    } catch { cb({}); }
+  });
+  // Проверка обновлений через полминуты после запуска, чтобы не мешать открытию программы
+  if (s.autoUpdate && !process.argv.includes('--smoke-test')) setTimeout(() => checkForUpdates().catch(() => undefined), 30000);
 });
+
+let chosenScreen = '';
+let captureAudio = true;
 
 app.on('window-all-closed', () => app.quit());
 
@@ -132,6 +149,7 @@ ipcMain.handle('app:info', async () => ({
   videosDir: app.getPath('videos'),
   documentsDir: app.getPath('documents'),
   userData: app.getPath('userData'),
+  assetsDir: join(app.getAppPath(), 'dist'),
   pendingOpen: (() => { const p = pendingOpen; pendingOpen = null; return p; })(),
 }));
 ipcMain.on('app:close-confirmed', () => { allowClose = true; win?.close(); });
@@ -193,6 +211,22 @@ ipcMain.handle('dialog:relink', async (_e, name: string) => {
   const r = await dialog.showOpenDialog(win!, { title: `Где теперь файл «${name}»?`, properties: ['openFile'], filters: MEDIA_FILTERS });
   return r.canceled ? null : r.filePaths[0];
 });
+ipcMain.handle('dialog:open-lut', async () => {
+  const r = await dialog.showOpenDialog(win!, { title: 'Выберите LUT-файл', properties: ['openFile'], filters: [{ name: 'LUT (цветовой рецепт)', extensions: ['cube', 'CUBE'] }] });
+  return r.canceled ? null : r.filePaths[0];
+});
+ipcMain.handle('dialog:open-subtitles', async () => {
+  const r = await dialog.showOpenDialog(win!, { title: 'Открыть субтитры', properties: ['openFile'], filters: [{ name: 'Субтитры', extensions: ['srt', 'vtt'] }] });
+  return r.canceled ? null : r.filePaths[0];
+});
+ipcMain.handle('dialog:save-text', async (_e, name: string, ext: string, title: string) => {
+  const s = getSettings();
+  const dir = s.exportDir && existsSync(s.exportDir) ? s.exportDir : app.getPath('videos');
+  const r = await dialog.showSaveDialog(win!, { title, defaultPath: join(dir, safeName(name) + '.' + ext), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+  return r.canceled || !r.filePath ? null : r.filePath;
+});
+ipcMain.handle('file:read-text', (_e, path: string) => readFileSync(path, 'utf8'));
+ipcMain.handle('file:write-text', (_e, path: string, text: string) => { writeFileSync(path, text, 'utf8'); return true; });
 ipcMain.handle('dialog:folder', async () => {
   const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'] });
   return r.canceled ? null : r.filePaths[0];
@@ -294,21 +328,32 @@ ipcMain.handle('media:save-image', (_e, dataUrl: string, name: string) => {
 // ── Экспорт ──────────────────────────────────────────
 const jobs = new Map<string, AbortController>();
 
-function writeTexts(texts: { clipId: string; dataUrl: string }[], jobId: string) {
-  return texts.map((t, i) => ({ clipId: t.clipId, path: dataUrlToFile(t.dataUrl, join(tempDir(), `${jobId}_t${i}.png`)) }));
+type TextPayload = { clipId: string; dataUrl: string; from?: number; to?: number };
+function writeTexts(texts: TextPayload[], jobId: string) {
+  return texts.map((t, i) => ({ clipId: t.clipId, from: t.from, to: t.to, path: dataUrlToFile(t.dataUrl, join(tempDir(), `${jobId}_t${i}.png`)) }));
 }
 
-async function runExport(jobId: string, project: Project, texts: { clipId: string; dataUrl: string }[], opts: ExportOptions, onProgress?: (p: number, speed: string) => void) {
+async function runExport(jobId: string, project: Project, texts: TextPayload[], opts: ExportOptions, onProgress?: (p: number, speed: string) => void) {
   const ctrl = new AbortController();
   jobs.set(jobId, ctrl);
   const textFiles = writeTexts(texts, jobId);
+  const temp: string[] = textFiles.map(t => t.path);
+  // Прозрачная картинка размером с кадр: паузы между субтитрами в общей ленте
+  let blank: string | undefined;
+  if (textFiles.length > 1) {
+    const b = join(tempDir(), `${jobId}_blank.png`);
+    const w = Math.max(2, Math.round(project.width / 2) * 2), h = Math.max(2, Math.round(project.height / 2) * 2);
+    const r = await run(FFMPEG, ['-hide_banner', '-y', '-f', 'lavfi', '-i', `color=c=black@0:s=${w}x${h},format=rgba`, '-frames:v', '1', b]);
+    if (r.code === 0 && existsSync(b)) { blank = b; temp.push(b); }
+  }
   let encoder = opts.encoder;
   if (encoder === 'auto') {
     const hw = (opts.format === 'mp4' || opts.format === 'mov') ? await hardwareEncoders() : [];
     encoder = (hw[0] as ExportOptions['encoder']) || 'cpu';
   }
   const attempt = async (enc: ExportOptions['encoder']) => {
-    const plan = buildExportArgs(project, textFiles, { ...opts, encoder: enc });
+    const plan = buildExportArgs(project, textFiles, { ...opts, encoder: enc }, { tempDir: tempDir(), blank });
+    for (const f of plan.files) { writeFileSync(f.path, f.content); temp.push(f.path); }
     const started = Date.now();
     const r = await run(FFMPEG, plan.args, {
       signal: ctrl.signal,
@@ -328,7 +373,7 @@ async function runExport(jobId: string, project: Project, texts: { clipId: strin
     return { ok: true, outPath: opts.outPath, seconds, encoder };
   } finally {
     jobs.delete(jobId);
-    for (const t of textFiles) try { unlinkSync(t.path); } catch { /* уже удалён */ }
+    for (const t of temp) try { unlinkSync(t); } catch { /* уже удалён */ }
   }
 }
 
@@ -365,7 +410,7 @@ ipcMain.handle('render:frame', async (_e, project: Project, texts, time: number,
 });
 
 // Распознавание речи: сводим звук проекта и отправляем в сервис
-ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: number; end: number }, language?: string) => {
+ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: number; end: number }, language?: string, fillers?: boolean) => {
   const id = 's' + Date.now();
   const out = join(tempDir(), id + '.mp3');
   const plan = buildExportArgs(project, [], {
@@ -379,9 +424,13 @@ ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: nu
   const r = await run(FFMPEG, args);
   if (r.code !== 0) throw new Error('Не удалось подготовить звук: ' + lastError(r.stderr));
   try {
-    const segs = await transcribeFile(out, language);
+    const segs = await transcribeFile(out, language, !!fillers);
     const offset = range?.start || 0;
-    return segs.map(s => ({ ...s, start: s.start + offset, end: Math.min(s.end + offset, projectDuration(project)) }));
+    const total = projectDuration(project);
+    return segs.map(s => ({
+      ...s, start: s.start + offset, end: Math.min(s.end + offset, total),
+      words: s.words?.map(w => ({ ...w, s: w.s + offset, e: Math.min(w.e + offset, total) })),
+    }));
   } finally {
     try { unlinkSync(out); } catch { /* ок */ }
   }
@@ -392,6 +441,25 @@ ipcMain.handle('ai:chat', (_e, sessionId: string, text: string, images: string[]
 ipcMain.handle('ai:stop', () => stopAi());
 ipcMain.handle('ai:reset', (_e, sessionId: string) => resetSession(sessionId));
 ipcMain.handle('ai:models', (_e, providerId: string, baseUrl?: string) => listModels(providerId, baseUrl));
+ipcMain.handle('ai:complete', (_e, system: string, user: string) => complete(system, user));
+
+// ── Обработка клипов, звук, запись экрана, обновления ──
+ipcMain.handle('media:process', (_e, jobId: string, kind: ProcessKind, path: string, from: number, to: number) =>
+  processClip(jobId, kind, path, from, to, p => notify('media:process-progress', { jobId, progress: p })));
+ipcMain.handle('media:process-cancel', (_e, jobId: string) => cancelProcess(jobId));
+ipcMain.handle('audio:snippet', (_e, project: Project, start: number, end: number) => audioSnippet(project, start, end));
+ipcMain.handle('audio:loudness', (_e, project: Project) => measureLoudness(project));
+ipcMain.handle('screen:sources', async () => {
+  const list = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
+  return list.filter(s => !/^Кадр$|^Kadr$/.test(s.name)).map(s => ({ id: s.id, name: s.id.startsWith('screen') ? (list.filter(x => x.id.startsWith('screen')).length > 1 ? s.name : 'Весь экран') : s.name, screen: s.id.startsWith('screen'), thumb: s.thumbnail.toDataURL() }));
+});
+ipcMain.handle('screen:choose', (_e, id: string, audio: boolean) => { chosenScreen = id; captureAudio = audio; });
+ipcMain.handle('app:minimize', () => win?.minimize());
+ipcMain.handle('app:restore', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+ipcMain.handle('update:check', () => checkForUpdates());
+ipcMain.handle('update:download', () => downloadUpdate());
+ipcMain.handle('update:state', () => updateState());
+ipcMain.handle('update:install', () => { allowClose = true; installUpdate(); });
 ipcMain.handle('mcp:status', () => ({ server: mcpServerState(), clients: clientStatus() }));
 ipcMain.handle('gen:image', (_e, prompt: string, aspect, provider?: string) => generateImage(prompt, aspect, provider));
 ipcMain.handle('gen:speech', (_e, text: string, voiceId?: string, model?: string) => generateSpeech(text, voiceId, model));

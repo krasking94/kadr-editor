@@ -223,6 +223,13 @@ input[type='range']:hover::-webkit-slider-thumb { transform: scale(1.18); }
 .tile:hover { border-color: var(--accent-line); transform: translateY(-1px); background: var(--raised-2); }
 .tile .t-prev { height: 44px; border-radius: 6px; display: grid; place-items: center; overflow: hidden; background: #0b0c12; position: relative; }
 .tile .t-name { font-size: 12px; color: var(--text-2); }
+.screen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-height: 320px; overflow-y: auto; }
+.screen-grid .tile .t-prev { height: 72px; }
+.screen-grid .tile .t-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+.emoji-btn { font-size: 22px; line-height: 1; aspect-ratio: 1; border-radius: 8px; background: var(--raised); border: 1px solid transparent; cursor: pointer; transition: transform .12s, background .12s, border-color .12s; }
+.emoji-btn:hover { transform: scale(1.15); background: var(--raised-2); border-color: var(--accent-line); }
+.emoji-btn:active { transform: scale(.95); }
 .empty-hint { color: var(--muted); font-size: 12px; text-align: center; padding: 18px 8px; line-height: 1.55; }
 
 /* ── Просмотр ────────────────────────────────────── */

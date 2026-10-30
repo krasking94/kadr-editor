@@ -5,7 +5,8 @@ import { api, mediaUrl } from '../api';
 import type { MediaClip, MediaItem, Project, TextClip, Track } from '../../shared/types';
 import { baseLayerSize } from '../../shared/export-graph';
 import { clipDuration, cssFilter, formatTime, projectDuration, textAnimState, transformAt, transitionDuration, FORMAT_PRESETS } from '../../shared/timeline';
-import { drawText } from '../lib/text-render';
+import { activeWord, drawText } from '../lib/text-render';
+import { PixelFx } from './PixelFx';
 import { loadFonts } from '../lib/fonts';
 import { set, sourceLabel, toast, useStore } from '../state/store';
 import { applyFormatPreset, importFiles, renderFrame, updateMediaClip, updateTextClip } from '../state/actions';
@@ -188,6 +189,7 @@ const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaI
   const c = p.info.clip as MediaClip;
   const m = p.media;
   const elRef = useRef<HTMLVideoElement & HTMLAudioElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const local = Math.max(0, p.t - c.start);
   const desired = c.in + local * c.speed;
   const visible = p.info.visible;
@@ -237,12 +239,15 @@ const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaI
     visibility: visible ? 'visible' : 'hidden', cursor: visible ? 'move' : undefined,
   };
   const inner: CSSProperties = flip ? { transform: flip.trim(), width: '100%', height: '100%' } : { width: '100%', height: '100%' };
+  // Хромакей и LUT браузер сам не умеет: такие клипы рисуются через холст (см. PixelFx)
+  const pixel = !!(c.key || c.color.lut);
   return (
     <div className={'layer' + (p.selected && visible ? ' selected' : '')} style={style} onPointerDown={e => startLayerDrag(e, c, p.W, p.H)}>
       <div style={inner}>
         {m.kind === 'image'
-          ? <img src={mediaUrl(m.path)} draggable={false} />
-          : <video ref={elRef} src={mediaUrl(m.path)} preload="auto" playsInline disablePictureInPicture />}
+          ? <img ref={imgRef} src={mediaUrl(m.path)} crossOrigin="anonymous" draggable={false} style={pixel ? { opacity: 0 } : undefined} />
+          : <video ref={elRef} src={mediaUrl(m.path)} crossOrigin="anonymous" preload="auto" playsInline disablePictureInPicture style={pixel ? { opacity: 0 } : undefined} />}
+        {pixel && visible && <PixelFx source={m.kind === 'image' ? imgRef : elRef} keyColor={c.key} lut={c.color.lut} w={w} h={h} playing={p.playing} t={p.t} />}
       </div>
       {c.effects.vignette > 0 && <div className="vignette" style={{ background: `radial-gradient(ellipse at center, transparent ${60 - c.effects.vignette * 35}%, rgba(0,0,0,${0.35 + c.effects.vignette * 0.6}) 100%)` }} />}
       {c.effects.grain > 0 && <div className="grain" style={{ backgroundImage: GRAIN, opacity: c.effects.grain * 0.8 }} />}
@@ -259,6 +264,7 @@ function startLayerDrag(e: React.PointerEvent, c: MediaClip, W: number, H: numbe
   const startX = e.clientX, startY = e.clientY;
   const t0 = { ...c.transform };
   const te0 = { ...c.transformEnd };
+  const path0 = c.path ? c.path.map(q => ({ ...q })) : null;
   let moved = false;
   const move = (ev: PointerEvent) => {
     const dx = (ev.clientX - startX) / W, dy = (ev.clientY - startY) / H;
@@ -271,6 +277,8 @@ function startLayerDrag(e: React.PointerEvent, c: MediaClip, W: number, H: numbe
     updateMediaClip(c.id, {
       transform: { x: nx, y: ny },
       ...(c.animate ? { transformEnd: { x: te0.x + (nx - t0.x), y: te0.y + (ny - t0.y) } } : {}),
+      // при слежении за лицом сдвигаем весь путь камеры
+      ...(path0 ? { path: path0.map(q => ({ t: q.t, x: q.x + (nx - t0.x), y: q.y + (ny - t0.y) })) } : {}),
     }, 'Положение изменено', { coalesce: 'drag:' + c.id });
   };
   const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
@@ -283,7 +291,8 @@ const TextLayer = memo(function TextLayer(p: { clip: TextClip; z: number; W: num
   const [bbox, setBbox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [fontsReady, setFontsReady] = useState(false);
   useEffect(() => { loadFonts().then(() => setFontsReady(true)); }, []);
-  const styleKey = JSON.stringify([p.clip.text, p.clip.style, p.W, p.H, fontsReady]);
+  const word = activeWord(p.clip, p.t - p.clip.start);
+  const styleKey = JSON.stringify([p.clip.text, p.clip.style, p.clip.highlight, p.W, p.H, fontsReady, word]);
   useEffect(() => {
     const cv = ref.current;
     if (!cv) return;
@@ -293,7 +302,7 @@ const TextLayer = memo(function TextLayer(p: { clip: TextClip; z: number; W: num
     const ctx = cv.getContext('2d')!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, p.W, p.H);
-    setBbox(drawText(ctx, p.clip, p.W, p.H));
+    setBbox(drawText(ctx, p.clip, p.W, p.H, word));
   }, [styleKey]);
   const visible = p.t >= p.clip.start && p.t < p.clip.start + p.clip.duration;
   const a = textAnimState(p.clip, p.t - p.clip.start);

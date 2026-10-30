@@ -111,17 +111,34 @@ export function makeTextClip(text: string, start: number, duration = 3, style: P
   };
 }
 
+// Значение кусочно-линейного пути в момент t
+export function pathAt(points: { t: number; x: number; y: number }[], t: number): { x: number; y: number } {
+  if (t <= points[0].t) return points[0];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    if (t < b.t) {
+      const k = (t - a.t) / Math.max(1e-3, b.t - a.t);
+      return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+    }
+  }
+  return points[points.length - 1];
+}
+
 // Положение анимированного слоя в момент local (0..длительность клипа)
 export function transformAt(c: MediaClip, local: number): Transform {
-  if (!c.animate) return c.transform;
-  const d = clipDuration(c);
-  const k = d > 0 ? Math.min(1, Math.max(0, local / d)) : 0;
-  const a = c.transform, b = c.transformEnd;
-  const lerp = (u: number, v: number) => u + (v - u) * k;
-  return {
-    x: lerp(a.x, b.x), y: lerp(a.y, b.y), scale: lerp(a.scale, b.scale),
-    rotation: lerp(a.rotation, b.rotation), opacity: lerp(a.opacity, b.opacity),
-  };
+  let tr = c.transform;
+  if (c.animate) {
+    const d = clipDuration(c);
+    const k = d > 0 ? Math.min(1, Math.max(0, local / d)) : 0;
+    const a = c.transform, b = c.transformEnd;
+    const lerp = (u: number, v: number) => u + (v - u) * k;
+    tr = {
+      x: lerp(a.x, b.x), y: lerp(a.y, b.y), scale: lerp(a.scale, b.scale),
+      rotation: lerp(a.rotation, b.rotation), opacity: lerp(a.opacity, b.opacity),
+    };
+  }
+  if (c.path?.length) tr = { ...tr, ...pathAt(c.path, local) };
+  return tr;
 }
 
 // Цветовые пресеты: одинаковые значения для просмотра и экспорта
