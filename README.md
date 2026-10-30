@@ -81,10 +81,14 @@ FFmpeg (движок обработки видео) уже внутри, нич�
 claude mcp add --transport http kadr http://127.0.0.1:7788/mcp
 ```
 
-**Claude Desktop** (`claude_desktop_config.json`, нужен Node.js):
+**Claude Desktop** (работает по обычной подписке, нужен [Node.js](https://nodejs.org)):
+
+1. В Claude Desktop: ☰ → Файл → Настройки → **Разработчик** → **Изменить конфигурацию**. Откроется `%APPDATA%\Claude\claude_desktop_config.json`.
+2. Вставьте и сохраните:
 ```json
-{ "mcpServers": { "kadr": { "command": "npx", "args": ["-y", "mcp-remote", "http://127.0.0.1:7788/mcp"] } } }
+{ "mcpServers": { "kadr": { "command": "cmd", "args": ["/c", "npx", "-y", "mcp-remote", "http://127.0.0.1:7788/mcp"] } } }
 ```
+3. Полностью выйдите из Claude (значок у часов → Выход) и откройте снова. Держите «Кадр» открытым.
 
 **Cursor, VS Code и другие:**
 ```json

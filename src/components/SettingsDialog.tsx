@@ -193,8 +193,8 @@ function McpSettings() {
         <CopyBox text={url} />
         <div className="small-text muted"><b>Claude Code</b> — выполните в терминале:</div>
         <CopyBox text={`claude mcp add --transport http kadr ${url}`} />
-        <div className="small-text muted"><b>Claude Desktop</b> — добавьте в файл настроек claude_desktop_config.json (нужен Node.js):</div>
-        <CopyBox text={JSON.stringify({ mcpServers: { kadr: { command: 'npx', args: ['-y', 'mcp-remote', url] } } }, null, 2)} />
+        <div className="small-text muted"><b>Claude Desktop</b> — вставьте в файл claude_desktop_config.json (Настройки → Разработчик → Изменить конфигурацию; нужен Node.js), затем полностью выйдите из Claude через значок у часов и откройте снова:</div>
+        <CopyBox text={JSON.stringify({ mcpServers: { kadr: { command: 'cmd', args: ['/c', 'npx', '-y', 'mcp-remote', url] } } }, null, 2)} />
         <div className="small-text muted"><b>Cursor, VS Code и другие</b> — в настройках MCP:</div>
         <CopyBox text={JSON.stringify({ mcpServers: { kadr: { url } } }, null, 2)} />
       </div>
