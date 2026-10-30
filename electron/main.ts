@@ -1,0 +1,429 @@
+// Главный процесс «Кадра»: окно, доступ к файлам, FFmpeg, ИИ и MCP.
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, shell, screen } from 'electron';
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, extname, join } from 'node:path';
+import { Readable } from 'node:stream';
+import type { ExportOptions, Project } from '../shared/types';
+import { buildExportArgs } from '../shared/export-graph';
+import { projectDuration } from '../shared/timeline';
+import { FFMPEG, ffmpegAvailable, probe, thumbnails, waveform, detectSilence, detectScenes, hardwareEncoders, run } from './ffmpeg';
+import { getSettings, setSettings, setSecret, secretStatus } from './settings';
+import { attachWindow, notify } from './bridge';
+import { chat, listModels, resetSession, stopAi, transcribeFile } from './ai';
+import { clientStatus, mcpServerState, startMcpServer, stopMcpServer, syncClients } from './mcp';
+import { generateImage, generateMusic, generateSoundEffect, generateSpeech, listVoices } from './generate';
+import { bridgeSelfTest, connectClaudeDesktop, desktopEntry, desktopStatus } from './desktop-link';
+
+const isDev = !!process.env.KADR_DEV_URL;
+let win: BrowserWindow | null = null;
+let allowClose = false;
+let pendingOpen: string | null = process.argv.find(a => a.toLowerCase().endsWith('.kadr') && existsSync(a)) || null;
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'kadr-media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, bypassCSP: true, corsEnabled: true } },
+]);
+
+if (!app.requestSingleInstanceLock()) app.quit();
+app.on('second-instance', (_e, argv) => {
+  const file = argv.find(a => a.toLowerCase().endsWith('.kadr'));
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    if (file) win.webContents.send('project:open-path', file);
+  }
+});
+
+const MIME: Record<string, string> = {
+  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.mkv': 'video/x-matroska',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.flac': 'audio/flac', '.opus': 'audio/ogg',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp', '.svg': 'image/svg+xml',
+  '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff2': 'font/woff2',
+};
+
+// Отдаёт локальные файлы окну с поддержкой перемотки (Range-запросы)
+function registerMediaProtocol() {
+  protocol.handle('kadr-media', async req => {
+    const url = new URL(req.url);
+    const path = decodeURIComponent(url.pathname.slice(1));
+    if (!existsSync(path)) return new Response('Not found', { status: 404 });
+    const size = statSync(path).size;
+    const type = MIME[extname(path).toLowerCase()] || 'application/octet-stream';
+    const range = req.headers.get('range');
+    if (range) {
+      const m = range.match(/bytes=(\d*)-(\d*)/);
+      const start = m && m[1] ? Number(m[1]) : 0;
+      const end = m && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+      const stream = Readable.toWeb(createReadStream(path, { start, end })) as ReadableStream;
+      return new Response(stream, {
+        status: 206,
+        headers: { 'content-type': type, 'content-length': String(end - start + 1), 'content-range': `bytes ${start}-${end}/${size}`, 'accept-ranges': 'bytes' },
+      });
+    }
+    const stream = Readable.toWeb(createReadStream(path)) as ReadableStream;
+    return new Response(stream, { headers: { 'content-type': type, 'content-length': String(size), 'accept-ranges': 'bytes' } });
+  });
+}
+
+function createWindow() {
+  const s = getSettings();
+  nativeTheme.themeSource = s.theme;
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  win = new BrowserWindow({
+    width: Math.min(1600, width), height: Math.min(1000, height), minWidth: 1024, minHeight: 640,
+    backgroundColor: '#0d0e12', show: false, title: 'Кадр',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: process.platform === 'darwin' ? undefined : { color: '#00000000', symbolColor: '#c9cad6', height: 44 },
+    icon: join(app.getAppPath(), 'dist', 'icon.png'),
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false,
+      backgroundThrottling: false,
+    },
+  });
+  attachWindow(win);
+  win.once('ready-to-show', () => win?.show());
+  win.on('close', e => {
+    if (allowClose) return;
+    e.preventDefault();
+    win?.webContents.send('app:close-request');
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  if (isDev) win.loadURL(process.env.KADR_DEV_URL!);
+  else win.loadFile(join(app.getAppPath(), 'dist', 'index.html'));
+  if (process.argv.includes('--smoke-test')) smokeTest(win);
+}
+
+// Проверка собранной программы (запускается на сервере сборки): окно открылось, интерфейс нарисован, FFmpeg найден
+function smokeTest(w: BrowserWindow) {
+  const fail = setTimeout(() => { console.log('SMOKE FAIL: timeout'); app.exit(1); }, 60000);
+  w.webContents.once('did-finish-load', async () => {
+    await new Promise(r => setTimeout(r, 4000));
+    const ui = await w.webContents.executeJavaScript(`!!document.querySelector('.welcome h1')`).catch(() => false);
+    const ff = ffmpegAvailable();
+    const mcp = mcpServerState();
+    const bridge = await bridgeSelfTest(mcp.port).catch(e => ({ ok: false, error: String(e) }));
+    console.log('SMOKE', JSON.stringify({ ui, ffmpeg: ff, mcp, bridge }));
+    clearTimeout(fail);
+    allowClose = true;
+    app.exit(ui && ff.ok && bridge.ok ? 0 : 1);
+  });
+}
+
+app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
+  registerMediaProtocol();
+  createWindow();
+  const s = getSettings();
+  if (s.mcp.serverEnabled) await startMcpServer(s.mcp.port);
+  syncClients(s.mcp.clients).catch(() => undefined);
+});
+
+app.on('window-all-closed', () => app.quit());
+
+// ── Общие сведения ───────────────────────────────────
+ipcMain.handle('app:info', async () => ({
+  version: app.getVersion(),
+  platform: process.platform,
+  ffmpeg: ffmpegAvailable(),
+  encoders: await hardwareEncoders().catch(() => []),
+  videosDir: app.getPath('videos'),
+  documentsDir: app.getPath('documents'),
+  userData: app.getPath('userData'),
+  pendingOpen: (() => { const p = pendingOpen; pendingOpen = null; return p; })(),
+}));
+ipcMain.on('app:close-confirmed', () => { allowClose = true; win?.close(); });
+ipcMain.handle('app:set-title', (_e, title: string) => win?.setTitle(title));
+ipcMain.handle('app:titlebar', (_e, color: string, symbol: string) => {
+  try { win?.setTitleBarOverlay?.({ color, symbolColor: symbol, height: 44 }); } catch { /* не на всех системах */ }
+});
+ipcMain.handle('app:toggle-fullscreen', () => win?.setFullScreen(!win.isFullScreen()));
+ipcMain.handle('app:devtools', () => win?.webContents.toggleDevTools());
+
+ipcMain.handle('shell:open-path', (_e, p: string) => shell.openPath(p));
+ipcMain.handle('shell:show-item', (_e, p: string) => shell.showItemInFolder(p));
+ipcMain.handle('shell:open-external', (_e, url: string) => { if (/^https?:/.test(url)) shell.openExternal(url); });
+
+// ── Настройки ────────────────────────────────────────
+ipcMain.handle('settings:get', () => ({ settings: getSettings(), secrets: secretStatus() }));
+ipcMain.handle('settings:set', async (_e, patch) => {
+  const before = getSettings();
+  const s = setSettings(patch);
+  if (patch.theme) nativeTheme.themeSource = s.theme;
+  if (patch.mcp) {
+    if (s.mcp.serverEnabled !== before.mcp.serverEnabled || s.mcp.port !== before.mcp.port) {
+      if (s.mcp.serverEnabled) await startMcpServer(s.mcp.port); else stopMcpServer();
+    }
+    syncClients(s.mcp.clients).catch(() => undefined);
+  }
+  return s;
+});
+ipcMain.handle('settings:set-secret', (_e, id: string, value: string) => { setSecret(id, value); return secretStatus(); });
+
+// ── Диалоги ──────────────────────────────────────────
+const MEDIA_FILTERS = [
+  { name: 'Видео, фото и звук', extensions: ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'wmv', 'mts', 'm2ts', '3gp', 'flv', 'mpg', 'mpeg', 'ts', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'tif', 'tiff', 'heic', 'avif', 'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'opus', 'wma', 'aiff'] },
+  { name: 'Все файлы', extensions: ['*'] },
+];
+ipcMain.handle('dialog:open-media', async () => {
+  const r = await dialog.showOpenDialog(win!, { title: 'Добавить файлы', properties: ['openFile', 'multiSelections'], filters: MEDIA_FILTERS });
+  return r.canceled ? [] : r.filePaths;
+});
+ipcMain.handle('dialog:open-project', async () => {
+  const r = await dialog.showOpenDialog(win!, { title: 'Открыть проект', properties: ['openFile'], filters: [{ name: 'Проект «Кадр»', extensions: ['kadr'] }] });
+  return r.canceled ? null : r.filePaths[0];
+});
+ipcMain.handle('dialog:save-project', async (_e, name: string) => {
+  const dir = join(app.getPath('documents'), 'Кадр');
+  mkdirSync(dir, { recursive: true });
+  const r = await dialog.showSaveDialog(win!, { title: 'Сохранить проект', defaultPath: join(dir, safeName(name) + '.kadr'), filters: [{ name: 'Проект «Кадр»', extensions: ['kadr'] }] });
+  return r.canceled ? null : r.filePath;
+});
+ipcMain.handle('dialog:export-path', async (_e, name: string, ext: string) => {
+  const s = getSettings();
+  const dir = s.exportDir && existsSync(s.exportDir) ? s.exportDir : app.getPath('videos');
+  const r = await dialog.showSaveDialog(win!, { title: 'Куда сохранить видео', defaultPath: join(dir, safeName(name) + '.' + ext), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
+  if (r.canceled || !r.filePath) return null;
+  setSettings({ exportDir: dirname(r.filePath) });
+  return r.filePath;
+});
+ipcMain.handle('dialog:relink', async (_e, name: string) => {
+  const r = await dialog.showOpenDialog(win!, { title: `Где теперь файл «${name}»?`, properties: ['openFile'], filters: MEDIA_FILTERS });
+  return r.canceled ? null : r.filePaths[0];
+});
+ipcMain.handle('dialog:folder', async () => {
+  const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory'] });
+  return r.canceled ? null : r.filePaths[0];
+});
+
+function safeName(n: string) {
+  return (n || 'Видео').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80);
+}
+
+// ── Проекты ──────────────────────────────────────────
+function addRecent(path: string, name: string) {
+  const s = getSettings();
+  const recent = [{ path, name, openedAt: Date.now() }, ...s.recent.filter(r => r.path !== path)].slice(0, 12);
+  setSettings({ recent });
+}
+ipcMain.handle('project:read', (_e, path: string) => {
+  const project = JSON.parse(readFileSync(path, 'utf8')) as Project;
+  for (const m of project.media) m.missing = !existsSync(m.path);
+  addRecent(path, project.name);
+  return project;
+});
+ipcMain.handle('project:write', (_e, path: string, project: Project) => {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = path + '.tmp';
+  writeFileSync(tmp, JSON.stringify(project, null, 1));
+  writeFileSync(path, readFileSync(tmp));
+  unlinkSync(tmp);
+  addRecent(path, project.name);
+  return true;
+});
+const autosaveDir = () => join(app.getPath('userData'), 'autosave');
+ipcMain.handle('project:autosave', (_e, project: Project, savedPath: string | null) => {
+  mkdirSync(autosaveDir(), { recursive: true });
+  writeFileSync(join(autosaveDir(), project.id + '.kadr'), JSON.stringify({ savedPath, savedAt: Date.now(), project }));
+  return true;
+});
+ipcMain.handle('project:autosaves', () => {
+  if (!existsSync(autosaveDir())) return [];
+  return readdirSync(autosaveDir()).filter(f => f.endsWith('.kadr')).map(f => {
+    try {
+      const d = JSON.parse(readFileSync(join(autosaveDir(), f), 'utf8'));
+      return { id: d.project.id, name: d.project.name, savedAt: d.savedAt, savedPath: d.savedPath, file: join(autosaveDir(), f) };
+    } catch { return null; }
+  }).filter(Boolean).sort((a: any, b: any) => b.savedAt - a.savedAt).slice(0, 10);
+});
+ipcMain.handle('project:read-autosave', (_e, file: string) => JSON.parse(readFileSync(file, 'utf8')));
+ipcMain.handle('project:drop-autosave', (_e, id: string) => {
+  const f = join(autosaveDir(), id + '.kadr');
+  if (existsSync(f)) unlinkSync(f);
+});
+ipcMain.handle('project:remove-recent', (_e, path: string) => {
+  setSettings({ recent: getSettings().recent.filter(r => r.path !== path) });
+});
+
+// ── Медиафайлы ───────────────────────────────────────
+ipcMain.handle('media:probe', (_e, path: string) => probe(path));
+ipcMain.handle('media:thumbs', (_e, path: string, kind, duration: number) => thumbnails(path, kind, duration));
+ipcMain.handle('media:waveform', (_e, path: string, duration: number) => waveform(path, duration));
+ipcMain.handle('media:silence', (_e, path: string, from: number, to: number, db: number, min: number) => detectSilence(path, from, to, db, min));
+ipcMain.handle('media:scenes', (_e, path: string, from: number, to: number, th: number) => detectScenes(path, from, to, th));
+ipcMain.handle('media:frame-at', async (_e, path: string, time: number) => {
+  const dir = join(app.getPath('documents'), 'Кадр', 'Стоп-кадры');
+  mkdirSync(dir, { recursive: true });
+  const out = join(dir, `Кадр ${Date.now()}.png`);
+  const r = await run(FFMPEG, ['-hide_banner', '-y', '-ss', String(time), '-i', path, '-frames:v', '1', out]);
+  if (r.code !== 0 || !existsSync(out)) throw new Error('Не удалось сохранить кадр');
+  return out;
+});
+ipcMain.handle('media:exists', (_e, path: string) => existsSync(path));
+
+const tempDir = () => { const d = join(tmpdir(), 'kadr'); mkdirSync(d, { recursive: true }); return d; };
+function dataUrlToFile(dataUrl: string, file: string) {
+  writeFileSync(file, Buffer.from(dataUrl.split(',')[1], 'base64'));
+  return file;
+}
+ipcMain.handle('media:save-recording', async (_e, data: ArrayBuffer, ext: string) => {
+  const dir = join(app.getPath('documents'), 'Кадр', 'Записи');
+  mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+  const raw = join(tempDir(), `rec_${Date.now()}.${ext}`);
+  writeFileSync(raw, Buffer.from(data));
+  // запись из браузерного движка не хранит длину файла — пересобираем контейнер, чтобы перемотка работала
+  const out = join(dir, `Запись ${stamp}.${ext}`);
+  try {
+    await run(FFMPEG, ['-hide_banner', '-y', '-i', raw, '-c', 'copy', out]);
+    unlinkSync(raw);
+    return out;
+  } catch {
+    writeFileSync(out, readFileSync(raw));
+    return out;
+  }
+});
+ipcMain.handle('media:save-image', (_e, dataUrl: string, name: string) => {
+  const dir = join(app.getPath('documents'), 'Кадр', 'Картинки');
+  mkdirSync(dir, { recursive: true });
+  return dataUrlToFile(dataUrl, join(dir, safeName(name) + '.png'));
+});
+
+// ── Экспорт ──────────────────────────────────────────
+const jobs = new Map<string, AbortController>();
+
+function writeTexts(texts: { clipId: string; dataUrl: string }[], jobId: string) {
+  return texts.map((t, i) => ({ clipId: t.clipId, path: dataUrlToFile(t.dataUrl, join(tempDir(), `${jobId}_t${i}.png`)) }));
+}
+
+async function runExport(jobId: string, project: Project, texts: { clipId: string; dataUrl: string }[], opts: ExportOptions, onProgress?: (p: number, speed: string) => void) {
+  const ctrl = new AbortController();
+  jobs.set(jobId, ctrl);
+  const textFiles = writeTexts(texts, jobId);
+  let encoder = opts.encoder;
+  if (encoder === 'auto') {
+    const hw = (opts.format === 'mp4' || opts.format === 'mov') ? await hardwareEncoders() : [];
+    encoder = (hw[0] as ExportOptions['encoder']) || 'cpu';
+  }
+  const attempt = async (enc: ExportOptions['encoder']) => {
+    const plan = buildExportArgs(project, textFiles, { ...opts, encoder: enc });
+    const started = Date.now();
+    const r = await run(FFMPEG, plan.args, {
+      signal: ctrl.signal,
+      onStdout: s => {
+        const m = [...s.matchAll(/out_time_us=(\d+)/g)].pop();
+        const sp = [...s.matchAll(/speed=\s*([\d.]+x)/g)].pop();
+        if (m && onProgress) onProgress(Math.min(1, Number(m[1]) / 1e6 / Math.max(0.01, plan.duration)), sp?.[1] || '');
+      },
+    });
+    return { r, seconds: (Date.now() - started) / 1000 };
+  };
+  try {
+    let { r, seconds } = await attempt(encoder);
+    if (r.code !== 0 && !ctrl.signal.aborted && encoder !== 'cpu') ({ r, seconds } = await attempt('cpu'));
+    if (ctrl.signal.aborted) return { ok: false, canceled: true };
+    if (r.code !== 0) return { ok: false, error: lastError(r.stderr) };
+    return { ok: true, outPath: opts.outPath, seconds, encoder };
+  } finally {
+    jobs.delete(jobId);
+    for (const t of textFiles) try { unlinkSync(t.path); } catch { /* уже удалён */ }
+  }
+}
+
+function lastError(stderr: string) {
+  const lines = stderr.trim().split('\n').filter(l => /error|invalid|failed|no such|not/i.test(l));
+  return (lines.slice(-3).join('\n') || stderr.trim().split('\n').slice(-3).join('\n')).slice(0, 800);
+}
+
+ipcMain.handle('export:start', async (_e, jobId: string, project: Project, texts, opts: ExportOptions) => {
+  if (opts.encoder === 'auto' && getSettings().encoder !== 'auto') opts.encoder = getSettings().encoder;
+  let last = 0;
+  const res = await runExport(jobId, project, texts, opts, (p, speed) => {
+    const now = Date.now();
+    if (now - last > 150 || p >= 1) { last = now; notify('export:progress', { jobId, progress: p, speed }); }
+  });
+  win?.setProgressBar(-1);
+  return res;
+});
+ipcMain.handle('export:cancel', (_e, jobId: string) => jobs.get(jobId)?.abort());
+ipcMain.handle('export:taskbar', (_e, p: number) => win?.setProgressBar(p));
+
+ipcMain.handle('render:frame', async (_e, project: Project, texts, time: number, width: number) => {
+  const id = 'f' + Date.now();
+  const out = join(tempDir(), id + '.jpg');
+  const scale = Math.min(1, width / project.width);
+  const res = await runExport(id, project, texts, {
+    outPath: out, format: 'png', width: Math.round(project.width * scale), height: Math.round(project.height * scale),
+    fps: project.fps, quality: 'good', encoder: 'cpu', rangeStart: time,
+  });
+  if (!res.ok || !existsSync(out)) throw new Error(res.error || 'Кадр не получился');
+  const b64 = readFileSync(out).toString('base64');
+  unlinkSync(out);
+  return b64;
+});
+
+// Распознавание речи: сводим звук проекта и отправляем в сервис
+ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: number; end: number }, language?: string) => {
+  const id = 's' + Date.now();
+  const out = join(tempDir(), id + '.mp3');
+  const plan = buildExportArgs(project, [], {
+    outPath: out, format: 'mp3', width: project.width, height: project.height, fps: project.fps, quality: 'draft', encoder: 'cpu',
+    rangeStart: range?.start, rangeEnd: range?.end,
+  });
+  const args = [...plan.args];
+  const bi = args.indexOf('-b:a');
+  if (bi >= 0) args[bi + 1] = '48k';
+  args.splice(args.length - 1, 0, '-ac', '1', '-ar', '16000');
+  const r = await run(FFMPEG, args);
+  if (r.code !== 0) throw new Error('Не удалось подготовить звук: ' + lastError(r.stderr));
+  try {
+    const segs = await transcribeFile(out, language);
+    const offset = range?.start || 0;
+    return segs.map(s => ({ ...s, start: s.start + offset, end: Math.min(s.end + offset, projectDuration(project)) }));
+  } finally {
+    try { unlinkSync(out); } catch { /* ок */ }
+  }
+});
+
+// ── ИИ и MCP ─────────────────────────────────────────
+ipcMain.handle('ai:chat', (_e, sessionId: string, text: string, images: string[]) => { chat(sessionId, text, images); return true; });
+ipcMain.handle('ai:stop', () => stopAi());
+ipcMain.handle('ai:reset', (_e, sessionId: string) => resetSession(sessionId));
+ipcMain.handle('ai:models', (_e, providerId: string, baseUrl?: string) => listModels(providerId, baseUrl));
+ipcMain.handle('mcp:status', () => ({ server: mcpServerState(), clients: clientStatus() }));
+ipcMain.handle('gen:image', (_e, prompt: string, aspect, provider?: string) => generateImage(prompt, aspect, provider));
+ipcMain.handle('gen:speech', (_e, text: string, voiceId?: string, model?: string) => generateSpeech(text, voiceId, model));
+ipcMain.handle('gen:sfx', (_e, prompt: string, duration?: number) => generateSoundEffect(prompt, duration));
+ipcMain.handle('gen:music', (_e, prompt: string, duration?: number, instrumental?: boolean) => generateMusic(prompt, duration, instrumental));
+ipcMain.handle('gen:voices', () => listVoices());
+ipcMain.handle('mcp:desktop-status', () => desktopStatus(getSettings().mcp.port));
+ipcMain.handle('mcp:desktop-connect', () => connectClaudeDesktop(getSettings().mcp.port));
+ipcMain.handle('mcp:desktop-entry', () => desktopEntry(getSettings().mcp.port));
+ipcMain.handle('mcp:restart', async () => {
+  const s = getSettings();
+  if (s.mcp.serverEnabled) await startMcpServer(s.mcp.port);
+  await syncClients(s.mcp.clients);
+  return { server: mcpServerState(), clients: clientStatus() };
+});
+
+// Пример проекта для первого знакомства: генерируем ролики прямо через FFmpeg
+ipcMain.handle('app:sample-media', async () => {
+  const dir = join(app.getPath('documents'), 'Кадр', 'Примеры');
+  mkdirSync(dir, { recursive: true });
+  const files = [
+    { name: 'Пример 1 — закат.mp4', args: ['-f', 'lavfi', '-i', 'gradients=s=1920x1080:c0=0xff7a3d:c1=0x7c5cff:x0=0:y0=0:x1=1920:y1=1080:speed=0.02:d=6:r=30', '-f', 'lavfi', '-i', 'sine=f=220:d=6', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac'] },
+    { name: 'Пример 2 — океан.mp4', args: ['-f', 'lavfi', '-i', 'gradients=s=1920x1080:c0=0x0ea5e9:c1=0x14b8a6:c2=0x1e3a8a:n=3:speed=0.03:d=6:r=30', '-f', 'lavfi', '-i', 'sine=f=330:d=6', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac'] },
+    { name: 'Пример 3 — сетка.mp4', args: ['-f', 'lavfi', '-i', 'testsrc2=s=1920x1080:r=30:d=5', '-c:v', 'libx264', '-pix_fmt', 'yuv420p'] },
+    { name: 'Музыка — спокойная.mp3', args: ['-f', 'lavfi', '-i', 'aevalsrc=0.15*sin(2*PI*220*t)*(1+0.5*sin(2*PI*0.5*t))+0.1*sin(2*PI*330*t):s=44100:d=20', '-c:a', 'libmp3lame'] },
+  ];
+  const out: string[] = [];
+  for (const f of files) {
+    const p = join(dir, f.name);
+    if (!existsSync(p)) await run(FFMPEG, ['-hide_banner', '-y', ...f.args, p]);
+    if (existsSync(p)) out.push(p);
+  }
+  return out;
+});
+
