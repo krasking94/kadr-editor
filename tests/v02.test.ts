@@ -90,7 +90,8 @@ test('хромакей, LUT, путь слоя, голос и громкость
   const green = gen('green.mp4', ['-f', 'lavfi', '-i', 'color=c=0x00ff00:s=320x240:r=30:d=2,drawbox=x=120:y=80:w=80:h=80:c=red:t=fill', '-c:v', 'libx264', '-pix_fmt', 'yuv420p']);
   const bgVideo = gen('blue.mp4', ['-f', 'lavfi', '-i', 'color=c=blue:s=640x360:r=30:d=2', '-f', 'lavfi', '-i', 'sine=f=300:d=2', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p']);
   // LUT в папке с двоеточием и апострофом в имени — проверка экранирования пути
-  const lutDir = join(dir, "Max's: LUT");
+  // в Windows двоеточие в имени папки запрещено, там его проверяет буква диска (C:)
+  const lutDir = join(dir, process.platform === 'win32' ? "Max's LUT" : "Max's: LUT");
   mkdirSync(lutDir, { recursive: true });
   const lut = join(lutDir, 'invert.cube');
   const rows: string[] = ['LUT_3D_SIZE 2'];
