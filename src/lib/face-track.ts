@@ -54,10 +54,20 @@ export async function trackFaces(path: string, from: number, to: number, opts: {
     v.addEventListener('loadeddata', () => resolve(), { once: true });
     v.addEventListener('error', () => reject(new Error('Видео не открылось')), { once: true });
   });
-  const cw = 384, ch = Math.max(2, Math.round((cw * v.videoHeight) / Math.max(1, v.videoWidth)));
+  const vw = v.videoWidth, vh = v.videoHeight;
+  const cw = 640, ch = Math.max(2, Math.round((cw * vh) / Math.max(1, vw)));
   const canvas = document.createElement('canvas');
   canvas.width = cw; canvas.height = ch;
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  // Детектор видит кадр в маленьком размере, и далёкое лицо теряется.
+  // Поэтому, если на целом кадре лица нет, смотрим три квадратных куска: слева, по центру и справа.
+  const T = 384, side = Math.min(vw, vh), long = Math.max(vw, vh) - side;
+  const tile = document.createElement('canvas');
+  tile.width = T; tile.height = T;
+  const tctx = tile.getContext('2d', { willReadFrequently: true })!;
+  type Box = { x: number; y: number; area: number };
+  const boxes = (res: ReturnType<Detector['detect']>, map: (b: { originX: number; originY: number; width: number; height: number }) => Box) =>
+    res.detections.filter(d => d.boundingBox).map(d => map(d.boundingBox!));
   const step = opts.step ?? 0.25;
   const out: FaceSample[] = [];
   let prev: { x: number; y: number } | null = null;
@@ -66,16 +76,26 @@ export async function trackFaces(path: string, from: number, to: number, opts: {
       if (opts.signal?.aborted) throw new Error('Отменено');
       await seek(v, Math.min(t, Math.max(0, (v.duration || to) - 0.05)));
       ctx.drawImage(v, 0, 0, cw, ch);
-      const res = det.detect(canvas);
+      let found = boxes(det.detect(canvas), b => ({ x: (b.originX + b.width / 2) / cw, y: (b.originY + b.height / 2) / ch, area: (b.width * b.height) / (cw * ch) }));
+      if (!found.length && side > 0) {
+        for (const off of [0, long / 2, long]) {
+          const sx = vw >= vh ? off : 0, sy = vw >= vh ? 0 : off;
+          tctx.drawImage(v, sx, sy, side, side, 0, 0, T, T);
+          found.push(...boxes(det.detect(tile), b => ({
+            x: (sx + ((b.originX + b.width / 2) / T) * side) / vw,
+            y: (sy + ((b.originY + b.height / 2) / T) * side) / vh,
+            area: ((b.width / T) * side * (b.height / T) * side) / (vw * vh),
+          })));
+        }
+        // куски перекрываются: одно лицо могло найтись дважды
+        found = found.filter((f, i) => !found.slice(0, i).some(g => Math.hypot(f.x - g.x, f.y - g.y) < 0.05));
+      }
       // самое крупное лицо, а при равных — ближайшее к прошлому, чтобы камера не прыгала между людьми
       let best: { x: number; y: number; score: number } | null = null;
-      for (const d of res.detections) {
-        const b = d.boundingBox;
-        if (!b) continue;
-        const x = (b.originX + b.width / 2) / cw, y = (b.originY + b.height / 2) / ch;
-        const near: number = prev ? 1 - Math.min(1, Math.hypot(x - prev.x, y - prev.y) * 2) : 0.5;
-        const score: number = (b.width * b.height) / (cw * ch) * 4 + near * 0.6;
-        if (!best || score > best.score) best = { x, y, score };
+      for (const f of found) {
+        const near: number = prev ? 1 - Math.min(1, Math.hypot(f.x - prev.x, f.y - prev.y) * 2) : 0.5;
+        const score: number = f.area * 4 + near * 0.6;
+        if (!best || score > best.score) best = { x: f.x, y: f.y, score };
       }
       if (best) prev = best;
       out.push({ t, x: best?.x ?? prev?.x ?? 0.5, y: best?.y ?? prev?.y ?? 0.5, found: !!best });

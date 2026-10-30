@@ -9,7 +9,7 @@ import { parseSrt, toSrt } from '../../shared/srt';
 import { chunkWords, estimateWords, findFillers, DEFAULT_FILLERS, type TimedWord } from '../../shared/speech';
 import { askConfirm, commit, endTask, get, set, startTask, toast, updateTask } from './store';
 import { addSubtitles, addTrack, BLOGGER_STYLE, importFiles, loadMediaCache, setProjectFormat, transcribeProject, type Segment } from './actions';
-import { cameraPath, trackFaces } from '../lib/face-track';
+import { cameraPath, faceDetector, trackFaces } from '../lib/face-track';
 import { renderShape, type ShapeKind } from '../lib/stickers';
 
 const clean = (e: unknown) => String((e as Error)?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -281,8 +281,16 @@ export async function autoReframe(o: { width?: number; height?: number; source?:
   const task = startTask('Ищу лица для вертикали', () => ctrl.abort());
   const paths = new Map<string, { t: number; x: number; y: number }[]>();
   let faces = 0;
+  // без WebGL (редко: старый драйвер или виртуальная машина) лица искать нечем — тогда просто кадр по центру
+  let canTrack = true;
+  try { await faceDetector(); } catch (e) {
+    canTrack = false;
+    console.warn('face detector', e);
+    toast('warn', 'Поиск лиц недоступен на этом компьютере', { detail: 'Видеокарта не дала программе WebGL. Сделаю вертикальный кадр по центру, положение можно поправить мышью.', ttl: 9000 });
+  }
   try {
     for (const [i, c] of clips.entries()) {
+      if (!canTrack) break;
       const m = mediaById(p0, c.mediaId)!;
       if (m.kind !== 'video' || m.missing) continue;
       const samples = await trackFaces(m.path, c.in, c.out, {
@@ -323,7 +331,7 @@ export async function autoReframe(o: { width?: number; height?: number; source?:
     }
     return ids;
   }, { source: o.source });
-  if (!faces) toast('info', 'Лиц не нашлось — кадр поставлен по центру', { detail: 'Положение можно поправить мышью в окне просмотра.' });
+  if (!faces && canTrack) toast('info', 'Лиц не нашлось — кадр поставлен по центру', { detail: 'Положение можно поправить мышью в окне просмотра.' });
   return { clips: clips.length, faces };
 }
 
