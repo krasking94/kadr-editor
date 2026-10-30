@@ -1,7 +1,7 @@
 // Состояние программы. Любое изменение проекта проходит через commit(): так работает отмена,
 // история шагов и подсветка того, что изменилось.
 import { create } from 'zustand';
-import type { Project } from '../../shared/types';
+import type { MediaItem, Project } from '../../shared/types';
 import { layoutProject, projectDuration } from '../../shared/timeline';
 import type { Settings } from '../../shared/settings';
 import { defaultSettings } from '../../shared/settings';
@@ -232,4 +232,19 @@ export function askConfirm(req: Omit<ConfirmRequest, 'resolve'>): Promise<string
 
 export function patchMediaCache(id: string, patch: Partial<MediaCacheEntry>) {
   set(s => ({ mediaCache: { ...s.mediaCache, [id]: { ...(s.mediaCache[id] ?? { filmstrip: [] }), ...patch } } }));
+}
+
+/**
+ * Служебные сведения о файле (расшифровка речи, лёгкая копия) — не шаг монтажа.
+ * Записываются сразу во все версии проекта в истории, чтобы Ctrl+Z их не стирал.
+ */
+export function patchMediaEverywhere(id: string, patch: Partial<MediaItem>) {
+  const fix = (p: Project): Project => (p.media.some(m => m.id === id) ? { ...p, media: p.media.map(m => (m.id === id ? { ...m, ...patch } : m)) } : p);
+  const s = get();
+  if (!s.project) return;
+  set({
+    project: fix(s.project), dirty: true,
+    past: s.past.map(h => ({ ...h, project: fix(h.project) })),
+    future: s.future.map(h => ({ ...h, project: fix(h.project) })),
+  });
 }

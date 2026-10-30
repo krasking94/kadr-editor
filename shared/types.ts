@@ -1,4 +1,4 @@
-// Общие типы проекта «Кадр». Их используют и окно программы, и экспорт, и ИИ-инструменты.
+// Общие типы проекта «Хлопушка». Их используют и окно программы, и экспорт, и ИИ-инструменты.
 
 export type MediaKind = 'video' | 'image' | 'audio';
 
@@ -17,6 +17,14 @@ export interface MediaItem {
   filmstrip?: string[]; // кадры для дорожки
   waveform?: number[]; // пики 0..1
   missing?: boolean;
+  transcript?: Transcript; // распознанная речь всего файла (время слов — от начала файла)
+  proxy?: string; // лёгкая копия для плавного просмотра; сохранение всегда идёт из оригинала
+}
+
+export interface Transcript {
+  words: Word[];
+  language?: string;
+  at: number; // когда распознано
 }
 
 export interface Transform {

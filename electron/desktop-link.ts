@@ -1,4 +1,4 @@
-// Подключение «Кадра» к Claude Desktop в один клик: запись в его файл настроек
+// Подключение «Хлопушки» к Claude Desktop в один клик: запись в его файл настроек
 // claude_desktop_config.json сервера, который запускает встроенный переходник (mcp-bridge.js).
 import { app } from 'electron';
 import { spawn } from 'node:child_process';
@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 
 export const bridgePath = () => (app.isPackaged ? join(process.resourcesPath, 'mcp-bridge.js') : join(__dirname, 'mcp-bridge.js'));
 
-/** Как Claude Desktop должен запускать «Кадр»: сам Kadr.exe в режиме Node, без отдельного Node.js */
+/** Как Claude Desktop должен запускать «Хлопушка»: сам Hlopushka.exe в режиме Node, без отдельного Node.js */
 export function desktopEntry(port: number) {
   const args = [bridgePath(), '--port', String(port)];
   if (app.isPackaged) args.push('--app', process.execPath);
@@ -40,6 +40,10 @@ function readConfig(file: string): Config {
   return raw ? JSON.parse(raw) : {};
 }
 
+// Имя сервера в настройках Claude Desktop. До версии 0.3 программа называлась «Кадр»
+export const SERVER_KEY = 'hlopushka';
+const OLD_KEY = 'kadr';
+
 export function desktopStatus(port: number) {
   const { dirs, installed } = claudeDirs();
   const want = JSON.stringify(desktopEntry(port));
@@ -47,8 +51,10 @@ export function desktopStatus(port: number) {
   let connected = false, outdated = false;
   for (const f of files) {
     try {
-      const k = readConfig(f).mcpServers?.kadr;
+      const servers = readConfig(f).mcpServers;
+      const k = servers?.[SERVER_KEY];
       if (k) { if (JSON.stringify(k) === want) connected = true; else outdated = true; }
+      else if (servers?.[OLD_KEY]) outdated = true; // подключали ещё под старым именем «Кадр»
     } catch { /* испорченный файл покажем при подключении */ }
   }
   return { installed, connected, outdated: outdated && !connected, files };
@@ -64,7 +70,9 @@ export function connectClaudeDesktop(port: number): { ok: boolean; files: string
       return { ok: false, files, error: `Файл настроек Claude испорчен, я не стал его трогать: ${file}` };
     }
     if (typeof cfg !== 'object' || cfg === null || Array.isArray(cfg)) return { ok: false, files, error: `Непонятный файл настроек Claude: ${file}` };
-    cfg.mcpServers = { ...(cfg.mcpServers && typeof cfg.mcpServers === 'object' ? cfg.mcpServers : {}), kadr: desktopEntry(port) };
+    const servers = { ...(cfg.mcpServers && typeof cfg.mcpServers === 'object' ? cfg.mcpServers : {}) } as Record<string, unknown>;
+    delete servers[OLD_KEY]; // запись от версии 0.2, когда программа называлась «Кадр»
+    cfg.mcpServers = { ...servers, [SERVER_KEY]: desktopEntry(port) };
     try {
       mkdirSync(dirname(file), { recursive: true });
       if (existsSync(file)) copyFileSync(file, file + '.bak');

@@ -37,14 +37,14 @@ export function TitleBar() {
 
   const rename = () => {
     const n = name.trim() || 'Без названия';
-    if (n !== project.name) { commit('Проект переименован', p => { p.name = n; }); api.setTitle(`${n} — Кадр`); }
+    if (n !== project.name) { commit('Проект переименован', p => { p.name = n; }); api.setTitle(`${n} — Хлопушка`); }
     setName(n);
   };
   const lastPast = past[past.length - 1];
 
   return (
     <div className="titlebar">
-      <div className="logo"><Logo /> Кадр</div>
+      <div className="logo"><Logo /> Хлопушка</div>
       {MENUS.map(m => (
         <button key={m.label} className="menu-btn" onClick={e => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); openMenu(menuItems(m.groups), r.left, r.bottom + 4); }}>{m.label}</button>
       ))}

@@ -1,4 +1,5 @@
 // Настройки: оформление, нейросети (ключи и модели), MCP, экспорт, клавиши, о программе.
+import { defaultLayout } from '../../shared/settings';
 import { useEffect, useState } from 'react';
 import { AudioLines, Bot, CheckCircle2, Copy, Cpu, ExternalLink, ImagePlus, Info, Keyboard, KeyRound, Loader2, Palette, Play, Plug, Plus, RefreshCw, Server, Settings as Gear, Trash2 } from 'lucide-react';
 import { ELEVEN_TTS_MODELS, IMAGE_PROVIDERS, imageProvider, type Voice } from '../../shared/generators';
@@ -7,7 +8,7 @@ import { PROVIDERS, providerPreset, SPEECH_PROVIDERS } from '../../shared/provid
 import type { McpClientConfig } from '../../shared/settings';
 import { uid } from '../../shared/timeline';
 import { set, toast, useStore } from '../state/store';
-import { saveSecret, saveSettings } from '../state/settings-actions';
+import { layoutOf, saveLayout, saveSecret, saveSettings } from '../state/settings-actions';
 import { installUpdateNow } from '../state/actions';
 import { Modal, Segmented, Slider, Switch } from './ui';
 import { ShortcutsList } from './ShortcutsDialog';
@@ -72,6 +73,16 @@ function General() {
         hint="Копия проекта на случай сбоя. Её можно восстановить на стартовом экране." />
       <Switch label="Прилипание клипов на таймлайне" checked={s.snapping} onChange={v => saveSettings({ snapping: v })} />
       <Switch label="Показывать подсказки для новичков" checked={s.showTips} onChange={v => saveSettings({ showTips: v })} />
+      <div className="field"><label>Расположение панелей</label>
+        <Segmented value={layoutOf(s).swap ? 'swap' : 'normal'} onChange={v => saveLayout({ swap: v === 'swap' })} options={[
+          { value: 'normal', label: 'Файлы слева', tip: 'Медиатека слева, настройки клипа и ИИ справа' },
+          { value: 'swap', label: 'Файлы справа', tip: 'Медиатека справа, настройки клипа и ИИ слева' },
+        ]} />
+        <div className="small-text muted">Ширину любой панели можно менять, потянув мышкой за её край. Двойной щелчок по краю — как было.</div>
+        <button className="btn small ghost" style={{ alignSelf: 'flex-start' }} onClick={() => saveSettings({ layout: defaultLayout() })}>Вернуть панели как было</button>
+      </div>
+      <Switch label="Лёгкие копии для тяжёлых видео (4K)" checked={s.proxy !== 'off'} onChange={v => saveSettings({ proxy: v ? 'auto' : 'off' })}
+        hint="Пока вы монтируете, показывается лёгкая копия 540p, и просмотр не тормозит. Сохраняется всегда оригинал в полном качестве." />
     </>
   );
 }
@@ -101,7 +112,7 @@ function AiSettings() {
   return (
     <>
       <div className="tip-card"><KeyRound size={18} color="var(--accent)" style={{ flex: 'none' }} />
-        <div><b>Как это работает.</b> Нейросеть живёт на сайте компании, а «Кадр» общается с ней через ключ — это длинный пароль из личного кабинета. Ключ хранится на вашем компьютере в зашифрованном виде и никуда больше не отправляется. Ollama и LM Studio работают прямо на компьютере, без ключа и интернета.</div>
+        <div><b>Как это работает.</b> Нейросеть живёт на сайте компании, а «Хлопушка» общается с ней через ключ — это длинный пароль из личного кабинета. Ключ хранится на вашем компьютере в зашифрованном виде и никуда больше не отправляется. Ollama и LM Studio работают прямо на компьютере, без ключа и интернета.</div>
       </div>
       <div className="provider-list">
         {PROVIDERS.map(p => (
@@ -202,7 +213,7 @@ function GenSettings() {
   return (
     <>
       <div className="tip-card"><ImagePlus size={18} color="var(--accent)" style={{ flex: 'none' }} />
-        <div><b>Создание прямо в «Кадре».</b> Вкладка <b>«Создать»</b> слева рисует картинки, озвучивает текст, делает звуки и музыку и сразу кладёт их на таймлайн. Это же умеют встроенный помощник и Claude по MCP: просто попросите. Готовые файлы сохраняются в папку «Документы → Кадр → Сгенерировано».</div>
+        <div><b>Создание прямо в «Хлопушке».</b> Вкладка <b>«Создать»</b> слева рисует картинки, озвучивает текст, делает звуки и музыку и сразу кладёт их на таймлайн. Это же умеют встроенный помощник и Claude по MCP: просто попросите. Готовые файлы сохраняются в папку «Документы → Кадр → Сгенерировано».</div>
       </div>
       <div className="card">
         <div className="row"><ImagePlus size={16} /><b>Картинки</b></div>
@@ -215,7 +226,7 @@ function GenSettings() {
           ))}
         </div>
         {p.hint && <div className="small-text muted">{p.hint}</div>}
-        <div className="small-text">Цена: <b>{p.price}</b>. Платите самому сервису, «Кадр» ничего не берёт.</div>
+        <div className="small-text">Цена: <b>{p.price}</b>. Платите самому сервису, «Хлопушка» ничего не берёт.</div>
         {(p.keyId === 'openai' || p.keyId === 'gemini') && <div className="small-text muted">Ключ общий с помощником: если вы уже вставили его на вкладке «Нейросети», ничего делать не нужно.</div>}
         <KeyField id={p.keyId} url={p.keyUrl} />
         {p.id === 'custom-image' && (
@@ -263,7 +274,7 @@ function GenSettings() {
 
 type DesktopStatus = { installed: boolean; connected: boolean; outdated: boolean; files: string[] };
 
-/** Claude Desktop в один клик: «Кадр» сам прописывает себя в настройках Claude, Node.js не нужен */
+/** Claude Desktop в один клик: «Хлопушка» сам прописывает себя в настройках Claude, Node.js не нужен */
 function ClaudeDesktopCard({ port, serverOn, lastClient }: { port: number; serverOn: boolean; lastClient?: string }) {
   const [st, setSt] = useState<DesktopStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -277,7 +288,7 @@ function ClaudeDesktopCard({ port, serverOn, lastClient }: { port: number; serve
     setBusy(true);
     const r = await api.mcpDesktopConnect().catch(e => ({ ok: false, files: [], error: String(e) }));
     setBusy(false);
-    if (r.ok) { setJustDone(true); toast('success', 'Claude Desktop подключён', { detail: 'Перезапустите Claude, чтобы он увидел «Кадр»' }); }
+    if (r.ok) { setJustDone(true); toast('success', 'Claude Desktop подключён', { detail: 'Перезапустите Claude, чтобы он увидел «Хлопушка»' }); }
     else toast('error', 'Не получилось подключить', { detail: r.error });
     load();
   };
@@ -293,17 +304,17 @@ function ClaudeDesktopCard({ port, serverOn, lastClient }: { port: number; serve
           {st?.connected ? 'Подключить заново' : 'Подключить'}
         </button>
       </div>
-      <div className="small-text muted">Работает по вашей обычной подписке Claude, ключ API и Node.js не нужны. «Кадр» сам впишет себя в настройки Claude Desktop.</div>
+      <div className="small-text muted">Работает по вашей обычной подписке Claude, ключ API и Node.js не нужны. «Хлопушка» сам впишет себя в настройки Claude Desktop.</div>
       {(justDone || (st?.connected && !seen)) && (
         <div className="tip-card"><CheckCircle2 size={18} color="var(--good, #22c55e)" style={{ flex: 'none' }} />
-          <div><b>Остался один шаг:</b> полностью закройте Claude — значок у часов внизу справа → правая кнопка → <b>Выход</b>, — и откройте снова. Потом напишите ему: «Что сейчас открыто в Кадре?»{!serverOn && <> Сервер «Кадра» ниже сейчас выключен — включите его.</>}</div>
+          <div><b>Остался один шаг:</b> полностью закройте Claude — значок у часов внизу справа → правая кнопка → <b>Выход</b>, — и откройте снова. Потом напишите ему: «Что сейчас открыто в Хлопушке?»{!serverOn && <> Сервер «Хлопушки» ниже сейчас выключен — включите его.</>}</div>
         </div>
       )}
       {st && !st.installed && <div className="small-text muted">Скачать Claude Desktop: <a href="https://claude.ai/download" target="_blank" rel="noreferrer">claude.ai/download</a>. После установки нажмите «Подключить».</div>}
       <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setManual(v => !v)}>{manual ? 'Скрыть' : 'Показать'} настройку для ручного ввода</button>
       {manual && !!entry && <>
         <div className="small-text muted">Файл: {st?.files[0] || 'claude_desktop_config.json'}</div>
-        <CopyBox text={JSON.stringify({ mcpServers: { kadr: entry } }, null, 2)} />
+        <CopyBox text={JSON.stringify({ mcpServers: { hlopushka: entry } }, null, 2)} />
       </>}
     </div>
   );
@@ -321,11 +332,11 @@ function McpSettings() {
   return (
     <>
       <div className="tip-card"><Plug size={18} color="var(--accent)" style={{ flex: 'none' }} />
-        <div><b>MCP</b> — общий «язык», на котором нейросети управляют программами. Включите сервер, и Claude, Cursor или другой ИИ на вашем компьютере смогут монтировать в «Кадре»: вы будете видеть каждое их действие и сможете отменить его.</div>
+        <div><b>MCP</b> — общий «язык», на котором нейросети управляют программами. Включите сервер, и Claude, Cursor или другой ИИ на вашем компьютере смогут монтировать в «Хлопушке»: вы будете видеть каждое их действие и сможете отменить его.</div>
       </div>
       <ClaudeDesktopCard port={s.mcp.port} serverOn={!!status?.server.running} lastClient={status?.server.lastClient} />
       <div className="card">
-        <div className="row"><Server size={16} /><b>Сервер «Кадра»</b>
+        <div className="row"><Server size={16} /><b>Сервер «Хлопушки»</b>
           <span className={'dot' + (status?.server.running ? ' on' : status?.server.error ? ' bad' : '')} style={{ marginLeft: 6 }} />
           <span className="small-text muted">{status?.server.running ? 'работает' : status?.server.error || 'выключен'}</span>
           <div className="spacer" />
@@ -340,9 +351,9 @@ function McpSettings() {
         <div className="small-text muted">Адрес для подключения (работает только на этом компьютере):</div>
         <CopyBox text={url} />
         <div className="small-text muted"><b>Claude Code</b> — выполните в терминале:</div>
-        <CopyBox text={`claude mcp add --transport http kadr ${url}`} />
+        <CopyBox text={`claude mcp add --transport http hlopushka ${url}`} />
         <div className="small-text muted"><b>Cursor, VS Code и другие</b> — в настройках MCP:</div>
-        <CopyBox text={JSON.stringify({ mcpServers: { kadr: { url } } }, null, 2)} />
+        <CopyBox text={JSON.stringify({ mcpServers: { hlopushka: { url } } }, null, 2)} />
       </div>
       <div className="card">
         <div className="row"><Plug size={16} /><b>Подключить инструменты к помощнику</b></div>
@@ -448,7 +459,7 @@ function About() {
       <div className="row" style={{ gap: 14 }}>
         <Logo size={56} />
         <div>
-          <div style={{ fontFamily: 'var(--display)', fontSize: 24, fontWeight: 700 }}>Кадр</div>
+          <div style={{ fontFamily: 'var(--display)', fontSize: 24, fontWeight: 700 }}>Хлопушка</div>
           <div className="muted">версия {info?.version} · {info?.platform === 'win32' ? 'Windows' : info?.platform}</div>
         </div>
       </div>

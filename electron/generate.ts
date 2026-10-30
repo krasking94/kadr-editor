@@ -1,4 +1,4 @@
-// Генерация картинок и звука. Готовые файлы складываются в «Документы/Кадр/Сгенерировано»,
+// Генерация картинок и звука. Готовые файлы складываются в «Документы/Хлопушка/Сгенерировано»,
 // а редактор сразу добавляет их в проект.
 import { app } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -7,7 +7,7 @@ import { imageProvider, type Aspect, type GenResult, type Voice } from '../share
 import { getSecret, getSettings } from './settings';
 
 const outDir = () => {
-  const d = join(app.getPath('documents'), 'Кадр', 'Сгенерировано');
+  const d = join(app.getPath('documents'), 'Хлопушка', 'Сгенерировано');
   mkdirSync(d, { recursive: true });
   return d;
 };

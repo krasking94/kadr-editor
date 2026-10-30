@@ -16,7 +16,7 @@ const jobs = new Map<string, AbortController>();
 export const cancelProcess = (id: string) => jobs.get(id)?.abort();
 
 function outDir() {
-  const d = join(app.getPath('documents'), 'Кадр', 'Обработка');
+  const d = join(app.getPath('documents'), 'Хлопушка', 'Обработка');
   mkdirSync(d, { recursive: true });
   return d;
 }
@@ -119,4 +119,35 @@ export async function measureLoudness(project: Project): Promise<{ lufs: number;
   const lufs = num(/I:\s+(-?[\d.]+) LUFS/), peak = num(/Peak:\s+(-?[\d.]+) dBFS/), lra = num(/LRA:\s+(-?[\d.]+) LU/);
   if (!isFinite(lufs)) throw new Error('Не удалось измерить громкость');
   return { lufs, peak, lra };
+}
+
+// Лёгкая копия 540p для плавного просмотра тяжёлых видео (4K, высокий битрейт).
+// Частые опорные кадры (каждые 12) — чтобы перемотка по таймлайну была мгновенной.
+export async function makeProxy(jobId: string, src: string, duration: number, onProgress: (p: number) => void): Promise<string> {
+  let mtime = 0;
+  try { mtime = statSync(src).mtimeMs; } catch { throw new Error('Исходный файл не найден'); }
+  const h = createHash('sha1').update(['proxy', src, mtime].join('|')).digest('hex').slice(0, 12);
+  const d = join(app.getPath('documents'), 'Хлопушка', 'Лёгкие копии');
+  mkdirSync(d, { recursive: true });
+  const name = src.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, '');
+  const out = join(d, `${name} ${h}.mp4`);
+  if (existsSync(out)) return out;
+  const ctrl = new AbortController();
+  jobs.set(jobId, ctrl);
+  const tmpOut = out + '.part.mp4';
+  try {
+    const r = await run(FFMPEG, ['-hide_banner', '-y', '-nostdin', '-progress', 'pipe:1', '-nostats', '-i', src,
+      '-vf', "scale=w='if(gte(iw,ih),-2,min(540,iw))':h='if(gte(iw,ih),min(540,ih),-2)'",
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '27', '-g', '12', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', tmpOut],
+    { signal: ctrl.signal, onStdout: progressOf(duration, onProgress) });
+    if (ctrl.signal.aborted) throw new Error('Отменено');
+    if (r.code !== 0) throw new Error('FFmpeg: ' + r.stderr.trim().split('\n').slice(-2).join(' ').slice(0, 400));
+    renameSync(tmpOut, out);
+    onProgress(1);
+    return out;
+  } finally {
+    jobs.delete(jobId);
+    if (existsSync(tmpOut)) rmSync(tmpOut, { force: true });
+  }
 }

@@ -1,4 +1,4 @@
-// Главный процесс «Кадра»: окно, доступ к файлам, FFmpeg, ИИ и MCP.
+// Главный процесс «Хлопушки»: окно, доступ к файлам, FFmpeg, ИИ и MCP.
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, screen } from 'electron';
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,11 +11,18 @@ import { FFMPEG, ffmpegAvailable, probe, thumbnails, waveform, detectSilence, de
 import { getSettings, setSettings, setSecret, secretStatus } from './settings';
 import { attachWindow, notify } from './bridge';
 import { chat, complete, listModels, resetSession, stopAi, transcribeFile } from './ai';
-import { audioSnippet, cancelProcess, measureLoudness, processClip, type ProcessKind } from './process';
+import { audioSnippet, cancelProcess, makeProxy, measureLoudness, processClip, type ProcessKind } from './process';
+import { detectBeats } from '../shared/beats';
+import { estimateWords } from '../shared/speech';
+import { spawn } from 'node:child_process';
 import { checkForUpdates, downloadUpdate, installUpdate, updateState } from './updater';
 import { clientStatus, mcpServerState, startMcpServer, stopMcpServer, syncClients } from './mcp';
 import { generateImage, generateMusic, generateSoundEffect, generateSpeech, listVoices } from './generate';
 import { bridgeSelfTest, connectClaudeDesktop, desktopEntry, desktopStatus } from './desktop-link';
+
+// До версии 0.3 программа называлась «Кадр» (Kadr). Настройки, ключи нейросетей, список проектов
+// и автосохранения остаются в прежней папке, чтобы после обновления ничего не пропало.
+app.setPath('userData', join(app.getPath('appData'), 'Kadr'));
 
 const isDev = !!process.env.KADR_DEV_URL;
 let win: BrowserWindow | null = null;
@@ -74,7 +81,7 @@ function createWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   win = new BrowserWindow({
     width: Math.min(1600, width), height: Math.min(1000, height), minWidth: 1024, minHeight: 640,
-    backgroundColor: '#0d0e12', show: false, title: 'Кадр',
+    backgroundColor: '#0d0e12', show: false, title: 'Хлопушка',
     titleBarStyle: 'hidden',
     titleBarOverlay: process.platform === 'darwin' ? undefined : { color: '#00000000', symbolColor: '#c9cad6', height: 44 },
     icon: join(app.getAppPath(), 'dist', 'icon.png'),
@@ -190,13 +197,13 @@ ipcMain.handle('dialog:open-media', async () => {
   return r.canceled ? [] : r.filePaths;
 });
 ipcMain.handle('dialog:open-project', async () => {
-  const r = await dialog.showOpenDialog(win!, { title: 'Открыть проект', properties: ['openFile'], filters: [{ name: 'Проект «Кадр»', extensions: ['kadr'] }] });
+  const r = await dialog.showOpenDialog(win!, { title: 'Открыть проект', properties: ['openFile'], filters: [{ name: 'Проект «Хлопушка»', extensions: ['kadr'] }] });
   return r.canceled ? null : r.filePaths[0];
 });
 ipcMain.handle('dialog:save-project', async (_e, name: string) => {
-  const dir = join(app.getPath('documents'), 'Кадр');
+  const dir = join(app.getPath('documents'), 'Хлопушка');
   mkdirSync(dir, { recursive: true });
-  const r = await dialog.showSaveDialog(win!, { title: 'Сохранить проект', defaultPath: join(dir, safeName(name) + '.kadr'), filters: [{ name: 'Проект «Кадр»', extensions: ['kadr'] }] });
+  const r = await dialog.showSaveDialog(win!, { title: 'Сохранить проект', defaultPath: join(dir, safeName(name) + '.kadr'), filters: [{ name: 'Проект «Хлопушка»', extensions: ['kadr'] }] });
   return r.canceled ? null : r.filePath;
 });
 ipcMain.handle('dialog:export-path', async (_e, name: string, ext: string) => {
@@ -288,7 +295,7 @@ ipcMain.handle('media:waveform', (_e, path: string, duration: number) => wavefor
 ipcMain.handle('media:silence', (_e, path: string, from: number, to: number, db: number, min: number) => detectSilence(path, from, to, db, min));
 ipcMain.handle('media:scenes', (_e, path: string, from: number, to: number, th: number) => detectScenes(path, from, to, th));
 ipcMain.handle('media:frame-at', async (_e, path: string, time: number) => {
-  const dir = join(app.getPath('documents'), 'Кадр', 'Стоп-кадры');
+  const dir = join(app.getPath('documents'), 'Хлопушка', 'Стоп-кадры');
   mkdirSync(dir, { recursive: true });
   const out = join(dir, `Кадр ${Date.now()}.png`);
   const r = await run(FFMPEG, ['-hide_banner', '-y', '-ss', String(time), '-i', path, '-frames:v', '1', out]);
@@ -303,7 +310,7 @@ function dataUrlToFile(dataUrl: string, file: string) {
   return file;
 }
 ipcMain.handle('media:save-recording', async (_e, data: ArrayBuffer, ext: string) => {
-  const dir = join(app.getPath('documents'), 'Кадр', 'Записи');
+  const dir = join(app.getPath('documents'), 'Хлопушка', 'Записи');
   mkdirSync(dir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
   const raw = join(tempDir(), `rec_${Date.now()}.${ext}`);
@@ -320,7 +327,7 @@ ipcMain.handle('media:save-recording', async (_e, data: ArrayBuffer, ext: string
   }
 });
 ipcMain.handle('media:save-image', (_e, dataUrl: string, name: string) => {
-  const dir = join(app.getPath('documents'), 'Кадр', 'Картинки');
+  const dir = join(app.getPath('documents'), 'Хлопушка', 'Картинки');
   mkdirSync(dir, { recursive: true });
   return dataUrlToFile(dataUrl, join(dir, safeName(name) + '.png'));
 });
@@ -384,6 +391,7 @@ function lastError(stderr: string) {
 
 ipcMain.handle('export:start', async (_e, jobId: string, project: Project, texts, opts: ExportOptions) => {
   if (opts.encoder === 'auto' && getSettings().encoder !== 'auto') opts.encoder = getSettings().encoder;
+  try { mkdirSync(dirname(opts.outPath), { recursive: true }); } catch { /* ошибку покажет FFmpeg */ }
   let last = 0;
   const res = await runExport(jobId, project, texts, opts, (p, speed) => {
     const now = Date.now();
@@ -436,6 +444,63 @@ ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: nu
   }
 });
 
+// Распознавание речи одного файла для монтажа через текст. Длинные записи идут кусками по 10 минут,
+// чтобы не упереться в ограничение сервиса на размер файла.
+const transcribeJobs = new Map<string, AbortController>();
+ipcMain.handle('ai:transcribe-media-cancel', (_e, jobId: string) => transcribeJobs.get(jobId)?.abort());
+ipcMain.handle('ai:transcribe-media', async (_e, jobId: string, path: string, duration: number, language?: string) => {
+  const ctrl = new AbortController();
+  transcribeJobs.set(jobId, ctrl);
+  const step = 600;
+  const parts = Math.max(1, Math.ceil(duration / step - 1e-6));
+  const words: { s: number; e: number; w: string }[] = [];
+  try {
+    for (let i = 0; i < parts; i++) {
+      if (ctrl.signal.aborted) throw new Error('Отменено');
+      notify('ai:transcribe-progress', { jobId, progress: i / parts });
+      const from = i * step, len = Math.min(step, duration - from);
+      if (len < 0.3) break;
+      const out = join(tempDir(), `tm_${jobId}_${i}.mp3`);
+      const r = await run(FFMPEG, ['-hide_banner', '-y', '-nostdin', '-ss', String(from), '-t', String(len), '-i', path, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '48k', out], { signal: ctrl.signal });
+      if (ctrl.signal.aborted) throw new Error('Отменено');
+      if (r.code !== 0) throw new Error('Не удалось подготовить звук: ' + lastError(r.stderr));
+      try {
+        const segs = await transcribeFile(out, language, true);
+        for (const seg of segs) {
+          const list = seg.words?.length ? seg.words : estimateWords(seg.text, seg.start, seg.end);
+          for (const w of list) words.push({ s: +(w.s + from).toFixed(3), e: +(Math.min(w.e, len) + from).toFixed(3), w: w.w });
+        }
+      } finally {
+        try { unlinkSync(out); } catch { /* ок */ }
+      }
+    }
+    // на стыке фраз сервис иногда повторяет слово — оставляем одно
+    words.sort((a, b) => a.s - b.s);
+    return words.filter((w, i) => !i || !(Math.abs(w.s - words[i - 1].s) < 0.02 && w.w === words[i - 1].w));
+  } finally {
+    transcribeJobs.delete(jobId);
+  }
+});
+
+// Доли в музыке: звук в виде чисел и поиск ударов
+ipcMain.handle('media:beats', async (_e, path: string, from: number, to: number) => {
+  const sr = 11025;
+  const buf = await new Promise<Buffer>(resolve => {
+    const child = spawn(FFMPEG, ['-hide_banner', '-v', 'error', '-ss', String(from), '-t', String(Math.max(0.5, to - from)), '-i', path, '-vn', '-ac', '1', '-ar', String(sr), '-f', 'f32le', '-'], { windowsHide: true });
+    const chunks: Buffer[] = [];
+    child.stdout.on('data', d => chunks.push(d));
+    child.on('close', () => resolve(Buffer.concat(chunks)));
+    child.on('error', () => resolve(Buffer.alloc(0)));
+  });
+  const samples = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 4));
+  const r = detectBeats(new Float32Array(samples), sr);
+  return { ...r, beats: r.beats.map(b => b + from) };
+});
+
+// Лёгкие копии для плавного просмотра
+ipcMain.handle('media:proxy', (_e, jobId: string, path: string, duration: number) =>
+  makeProxy(jobId, path, duration, p => notify('media:process-progress', { jobId, progress: p })));
+
 // ── ИИ и MCP ─────────────────────────────────────────
 ipcMain.handle('ai:chat', (_e, sessionId: string, text: string, images: string[]) => { chat(sessionId, text, images); return true; });
 ipcMain.handle('ai:stop', () => stopAi());
@@ -478,7 +543,7 @@ ipcMain.handle('mcp:restart', async () => {
 
 // Пример проекта для первого знакомства: генерируем ролики прямо через FFmpeg
 ipcMain.handle('app:sample-media', async () => {
-  const dir = join(app.getPath('documents'), 'Кадр', 'Примеры');
+  const dir = join(app.getPath('documents'), 'Хлопушка', 'Примеры');
   mkdirSync(dir, { recursive: true });
   const files = [
     { name: 'Пример 1 — закат.mp4', args: ['-f', 'lavfi', '-i', 'gradients=s=1920x1080:c0=0xff7a3d:c1=0x7c5cff:x0=0:y0=0:x1=1920:y1=1080:speed=0.02:d=6:r=30', '-f', 'lavfi', '-i', 'sine=f=220:d=6', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac'] },

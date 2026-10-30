@@ -6,6 +6,7 @@ import {
   mediaById, MIN_CLIP, newProject, projectDuration, uid, defaultTextStyle,
 } from '../../shared/timeline';
 import { renderTextPngs } from '../lib/text-render';
+import { autoProxies, checkProxies } from './media-tools';
 import { loadFonts } from '../lib/fonts';
 import { askConfirm, commit, endTask, get, patchMediaCache, set, startTask, toast, updateTask, type QueueItem } from './store';
 
@@ -15,17 +16,18 @@ const deepMerge = <T extends object>(base: T, patch: Partial<T> | undefined): T 
 export function openNewProject(width = 1920, height = 1080, name = 'Новый проект') {
   const p = newProject(name, width, height, 30);
   set({ project: p, savedPath: null, dirty: false, past: [], future: [], selection: [], playhead: 0, playing: false, screen: 'editor', zoom: 80 });
-  api.setTitle(`${name} — Кадр`);
+  api.setTitle(`${name} — Хлопушка`);
 }
 
 export async function loadProject(project: Project, savedPath: string | null, dirty = false) {
   layoutProject(project);
   set({ project, savedPath, dirty, past: [], future: [], selection: [], playhead: 0, playing: false, screen: 'editor' });
-  api.setTitle(`${project.name} — Кадр`);
+  api.setTitle(`${project.name} — Хлопушка`);
   fitZoom();
   const missing = project.media.filter(m => m.missing);
   if (missing.length) toast('warn', `Не найдено файлов: ${missing.length}`, { detail: 'Они подсвечены красным в медиатеке. Нажмите на файл, чтобы указать, где он теперь.', ttl: 8000 });
   for (const m of project.media) if (!m.missing) loadMediaCache(m);
+  checkProxies();
 }
 
 export async function openProjectFile(path?: string) {
@@ -79,7 +81,7 @@ export async function confirmDiscard(): Promise<boolean> {
 export async function closeProject() {
   if (!(await confirmDiscard())) return;
   set({ project: null, savedPath: null, screen: 'welcome', playing: false, past: [], future: [], selection: [] });
-  api.setTitle('Кадр');
+  api.setTitle('Хлопушка');
 }
 
 export function setProjectFormat(width: number, height: number, label?: string) {
@@ -138,6 +140,7 @@ export async function importFiles(paths: string[], opts: { toTimeline?: boolean;
     if (get().project!.tracks.some(t => t.clips.length) && opts.toTimeline) fitZoom();
   }
   for (const m of fresh) loadMediaCache(m);
+  autoProxies(fresh);
   if (errors.length) toast('error', `Не получилось добавить: ${errors.length}`, { detail: errors.slice(0, 3).join('\n') });
   return added;
 }
@@ -659,7 +662,7 @@ async function textRenders(p: Project, scale = 1) {
   return out;
 }
 
-function projectForRender(p: Project): Project {
+export function projectForRender(p: Project): Project {
   const copy = structuredClone(p);
   copy.media = copy.media.filter(m => !m.missing);
   for (const t of copy.tracks) t.clips = t.clips.filter(c => c.type !== 'media' || copy.media.some(m => m.id === c.mediaId));
@@ -723,7 +726,7 @@ export function watchUpdates(): () => void {
     if (updateShown === key) return;
     if (u.status === 'available') {
       updateShown = key;
-      toast('info', `Вышла новая версия «Кадра» — ${u.version}`, { ttl: 20000, detail: 'Скачается в фоне, работе не мешает.', action: { label: 'Скачать', run: () => api.updateDownload() } });
+      toast('info', `Вышла новая версия «Хлопушки» — ${u.version}`, { ttl: 20000, detail: 'Скачается в фоне, работе не мешает.', action: { label: 'Скачать', run: () => api.updateDownload() } });
     } else if (u.status === 'ready') {
       updateShown = key;
       toast('success', `Обновление ${u.version} готово`, { ttl: 30000, detail: 'Установится при перезапуске или когда вы закроете программу.', action: { label: 'Перезапустить', run: () => installUpdateNow() } });
@@ -735,8 +738,9 @@ export function watchUpdates(): () => void {
 const queued = new Map<string, { opts: ExportOptions; project: Project; texts: Awaited<ReturnType<typeof textRenders>> }>();
 let pumping = false;
 
-export async function queueExport(opts: ExportOptions): Promise<void> {
-  const p = projectForRender(get().project!);
+/** Поставить в очередь сохранения. custom — особая версия проекта (вертикальная копия, короткий ролик). */
+export async function queueExport(opts: ExportOptions, custom?: Project): Promise<void> {
+  const p = projectForRender(custom ?? get().project!);
   if (projectDuration(p) <= 0) { toast('info', 'Таймлайн пуст: добавьте видео, фото или текст'); return; }
   const id = 'q' + Date.now() + Math.random().toString(36).slice(2, 5);
   queued.set(id, { opts, project: p, texts: await textRenders(p) });
@@ -846,7 +850,7 @@ export async function openSampleProject() {
     const audioTrack = p.tracks.find(t => t.kind === 'audio')!;
     if (added[0]) audioTrack.clips.push(makeMediaClip(added[0], { start: 0, volume: 0.6, audioFadeIn: 1, audioFadeOut: 2, out: Math.min(added[0].duration, projectDuration(p)) }));
     const textTrack = p.tracks.find(t => t.kind === 'text')!;
-    const title = makeTextClip('Привет, это «Кадр»!', 0.4, 3.2, { font: 'Unbounded', size: 90, bold: true, y: 0.45 });
+    const title = makeTextClip('Привет, это «Хлопушка»!', 0.4, 3.2, { font: 'Unbounded', size: 90, bold: true, y: 0.45 });
     title.animIn = 'zoom'; title.animOut = 'fade';
     const sub = makeTextClip('Нажмите пробел, чтобы посмотреть', 0.9, 2.7, { size: 42, y: 0.58, color: '#e8e8ff' });
     sub.animIn = 'slide-up';

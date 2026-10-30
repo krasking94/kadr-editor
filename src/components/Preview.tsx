@@ -9,6 +9,7 @@ import { activeWord, drawText } from '../lib/text-render';
 import { PixelFx } from './PixelFx';
 import { loadFonts } from '../lib/fonts';
 import { set, sourceLabel, toast, useStore } from '../state/store';
+import { previewPath } from '../state/media-tools';
 import { applyFormatPreset, importFiles, renderFrame, updateMediaClip, updateTextClip } from '../state/actions';
 import { openMenu } from './ui';
 import { NO_FX, transitionFx, type TransitionFx } from '../lib/transition-fx';
@@ -186,6 +187,7 @@ function Thirds() {
 }
 
 const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaItem; W: number; H: number; k: number; t: number; playing: boolean; selected: boolean; muted: boolean }) {
+  const useProxy = useStore(s => s.settings.proxy !== 'off');
   const c = p.info.clip as MediaClip;
   const m = p.media;
   const elRef = useRef<HTMLVideoElement & HTMLAudioElement>(null);
@@ -221,7 +223,7 @@ const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaI
     return <div className="layer" style={{ width: p.W, height: p.H, zIndex: p.info.z, display: 'grid', placeItems: 'center', background: '#3a1620', color: '#ffb3bd', fontSize: 13 }}>Файл не найден: {m?.name}</div>;
   }
   if (m.kind === 'audio' || p.info.track.hidden) {
-    return <audio ref={elRef} src={mediaUrl(m.path)} preload="auto" />;
+    return <audio ref={elRef} src={mediaUrl(previewPath(m, useProxy))} preload="auto" />;
   }
   const tr = transformAt(c, local);
   const base = baseLayerSize(m, c.fit, p.W, p.H);
@@ -246,7 +248,7 @@ const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaI
       <div style={inner}>
         {m.kind === 'image'
           ? <img ref={imgRef} src={mediaUrl(m.path)} crossOrigin="anonymous" draggable={false} style={pixel ? { opacity: 0 } : undefined} />
-          : <video ref={elRef} src={mediaUrl(m.path)} crossOrigin="anonymous" preload="auto" playsInline disablePictureInPicture style={pixel ? { opacity: 0 } : undefined} />}
+          : <video ref={elRef} src={mediaUrl(previewPath(m, useProxy))} crossOrigin="anonymous" preload="auto" playsInline disablePictureInPicture style={pixel ? { opacity: 0 } : undefined} />}
         {pixel && visible && <PixelFx source={m.kind === 'image' ? imgRef : elRef} keyColor={c.key} lut={c.color.lut} w={w} h={h} playing={p.playing} t={p.t} />}
       </div>
       {c.effects.vignette > 0 && <div className="vignette" style={{ background: `radial-gradient(ellipse at center, transparent ${60 - c.effects.vignette * 35}%, rgba(0,0,0,${0.35 + c.effects.vignette * 0.6}) 100%)` }} />}

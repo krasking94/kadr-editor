@@ -6,6 +6,7 @@ import type { ExportOptions } from '../../shared/types';
 import { clipEnd, findClip, formatTime, projectDuration } from '../../shared/timeline';
 import { get, set, useStore } from '../state/store';
 import { exportVideo, queueExport } from '../state/actions';
+import { EXTRA_FORMATS, queueFormats } from '../state/script';
 import { Modal, Segmented } from './ui';
 
 type Format = ExportOptions['format'];
@@ -47,6 +48,7 @@ export function ExportDialog() {
   const [result, setResult] = useState<{ outPath?: string; error?: string; seconds?: number }>({});
   const [startedAt, setStartedAt] = useState(0);
   const [loudness, setLoudness] = useState(settings.loudness ?? -14);
+  const [extra, setExtra] = useState<string[]>([]);
   const queue = useStore(s => s.exportQueue);
   const busyQueue = queue.filter(q => q.state === 'wait' || q.state === 'run').length;
   const duration = projectDuration(project);
@@ -98,8 +100,16 @@ export function ExportDialog() {
     rangeStart: r.start > 0 ? r.start : undefined, rangeEnd: r.end < duration ? r.end : undefined,
     loudness: format === 'gif' || !loudness ? undefined : loudness,
   });
+  // «Несколько форматов за раз»: копии в другом формате (вертикаль, квадрат) ставятся в очередь
+  const extraOk = format === 'mp4' || format === 'mov' || format === 'webm';
+  const otherFormats = EXTRA_FORMATS.filter(f => Math.abs(f.width / f.height - project.width / project.height) > 0.01);
+  const queueExtra = async () => {
+    const ids = extraOk ? extra.filter(id => otherFormats.some(f => f.id === id)) : [];
+    if (ids.length) await queueFormats(ids, options());
+  };
   const toQueue = async () => {
     await queueExport(options());
+    await queueExtra();
     // следующий файл в очереди получит другое имя, чтобы не перезаписать этот
     setPath(p => p.replace(/(?: \((\d+)\))?(\.[a-z0-9]+)$/i, (_m, n, e) => ` (${(Number(n) || 1) + 1})${e}`));
   };
@@ -107,6 +117,7 @@ export function ExportDialog() {
     setState('running');
     setProgress(0);
     setStartedAt(Date.now());
+    await queueExtra();
     const res = await exportVideo(options());
     setResult(res);
     setState(res.ok ? 'done' : res.canceled ? 'setup' : 'error');
@@ -230,6 +241,19 @@ export function ExportDialog() {
           </div>
         )}
       </div>
+      {extraOk && otherFormats.length > 0 && (
+        <div className="field">
+          <label>Ещё и в других форматах <span className="small-text muted" style={{ marginLeft: 'auto' }}>видео подстроится под кадр, лицо останется в центре</span></label>
+          <div className="row wrap">
+            {otherFormats.map(f => (
+              <button key={f.id} className={'chip' + (extra.includes(f.id) ? ' on' : '')} data-tip={f.hint}
+                onClick={() => setExtra(x => (x.includes(f.id) ? x.filter(i => i !== f.id) : [...x, f.id]))}>
+                {extra.includes(f.id) ? '✓ ' : ''}{f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="field">
         <label>Куда сохранить</label>
         <div className="row">

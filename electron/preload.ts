@@ -61,6 +61,8 @@ const api = {
   pathForFile: (f: File) => webUtils.getPathForFile(f),
   processClip: call('media:process'),
   processCancel: call('media:process-cancel'),
+  makeProxy: call('media:proxy'),
+  beats: call('media:beats'),
   onProcessProgress: on('media:process-progress'),
   audioSnippet: call('audio:snippet'),
   loudness: call('audio:loudness'),
@@ -80,6 +82,9 @@ const api = {
   renderFrame: call('render:frame'),
 
   transcribe: call('ai:transcribe'),
+  transcribeMedia: call('ai:transcribe-media'),
+  transcribeMediaCancel: call('ai:transcribe-media-cancel'),
+  onTranscribeProgress: on('ai:transcribe-progress'),
   aiChat: call('ai:chat'),
   aiStop: call('ai:stop'),
   aiReset: call('ai:reset'),

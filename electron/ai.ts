@@ -7,6 +7,7 @@ import { ANTHROPIC_FALLBACK_MODELS, providerPreset } from '../shared/providers';
 import { getSecret, getSettings } from './settings';
 import { callEditor, notify, type ToolOutput } from './bridge';
 import { externalTools } from './mcp';
+import { punctuate } from '../shared/speech';
 
 interface Session {
   provider: string;
@@ -168,7 +169,7 @@ async function runOpenAI(sessionId: string, s: Session, cfg: ReturnType<typeof p
   const tools = allTools().map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.schema } }));
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (cfg.key) headers.authorization = 'Bearer ' + cfg.key;
-  if (cfg.preset.id === 'openrouter') { headers['HTTP-Referer'] = 'https://github.com/krasking94/kadr-editor'; headers['X-Title'] = 'Kadr'; }
+  if (cfg.preset.id === 'openrouter') { headers['HTTP-Referer'] = 'https://github.com/krasking94/kadr-editor'; headers['X-Title'] = 'Hlopushka'; }
 
   for (let step = 0; step < 40; step++) {
     emit(sessionId, { type: 'thinking' });
@@ -278,7 +279,7 @@ export async function transcribeFile(path: string, language?: string, fillers = 
     : [];
   if (Array.isArray(data.segments)) {
     const segs: Segment[] = data.segments.map((x: any) => ({ start: Number(x.start), end: Number(x.end), text: String(x.text).trim() })).filter((x: Segment) => x.text);
-    if (words.length) for (const seg of segs) seg.words = words.filter(w => w.s >= seg.start - 0.05 && w.s < seg.end - 0.01);
+    if (words.length) for (const seg of segs) seg.words = punctuate(words.filter(w => w.s >= seg.start - 0.05 && w.s < seg.end - 0.01), seg.text);
     return segs;
   }
   if (data.text) return [{ start: 0, end: Number(data.duration || 5), text: String(data.text).trim() }];

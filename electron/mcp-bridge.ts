@@ -1,8 +1,8 @@
 // Переходник MCP для Claude Desktop и других программ, которые умеют запускать сервер только как
-// процесс с вводом-выводом (stdio). Запускается самим Kadr.exe в режиме Node (ELECTRON_RUN_AS_NODE=1),
+// процесс с вводом-выводом (stdio). Запускается самим Hlopushka.exe в режиме Node (ELECTRON_RUN_AS_NODE=1),
 // поэтому отдельно ставить Node.js не нужно. Каждое сообщение из stdin пересылается на HTTP-сервер
-// «Кадра», ответы возвращаются в stdout. Пока «Кадр» закрыт, знакомство и список инструментов
-// переходник отдаёт сам, а при первом вызове инструмента открывает «Кадр».
+// «Хлопушки», ответы возвращаются в stdout. Пока «Хлопушка» закрыт, знакомство и список инструментов
+// переходник отдаёт сам, а при первом вызове инструмента открывает «Хлопушка».
 import { spawn } from 'node:child_process';
 import { MCP_INSTRUCTIONS, TOOLS } from '../shared/tools';
 
@@ -22,13 +22,13 @@ async function alive(): Promise<boolean> {
 }
 
 let launching: Promise<boolean> | null = null;
-/** Открыть «Кадр», если он не запущен, и дождаться его сервера */
+/** Открыть «Хлопушка», если он не запущен, и дождаться его сервера */
 function ensureApp(): Promise<boolean> {
   if (!launching) {
     launching = (async () => {
       if (await alive()) return true;
       if (!appExe) return false;
-      log('«Кадр» не запущен, открываю', appExe);
+      log('«Хлопушка» не запущен, открываю', appExe);
       const env = { ...process.env };
       delete env.ELECTRON_RUN_AS_NODE;
       spawn(appExe, [], { detached: true, stdio: 'ignore', env, windowsHide: false }).unref();
@@ -42,7 +42,7 @@ function ensureApp(): Promise<boolean> {
   return launching;
 }
 
-/** Ответ без «Кадра»: Claude Desktop знакомится с сервером при каждом своём запуске, открывать ради этого окно не нужно */
+/** Ответ без «Хлопушки»: Claude Desktop знакомится с сервером при каждом своём запуске, открывать ради этого окно не нужно */
 function answerOffline(msg: Msg) {
   const reply = (result: unknown) => write({ jsonrpc: '2.0', id: msg.id, result });
   if (msg.method === 'initialize') reply({ protocolVersion: msg.params?.protocolVersion || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'kadr', version: '0.1.0' }, instructions: MCP_INSTRUCTIONS });
@@ -50,7 +50,7 @@ function answerOffline(msg: Msg) {
   else if (msg.method === 'ping') reply({});
 }
 
-// Знакомство клиента: «Кадр» узнаёт из него имя ИИ, чтобы подписывать его действия в истории
+// Знакомство клиента: «Хлопушка» узнаёт из него имя ИИ, чтобы подписывать его действия в истории
 let initMsg: Msg | null = null;
 let introduced = false;
 
@@ -76,7 +76,7 @@ async function forward(msg: Msg) {
       });
     } catch {
       if (attempt === 0 && await ensureApp()) continue;
-      fail('Программа «Кадр» не запущена или выключен MCP-сервер (Настройки → Внешний ИИ). Откройте «Кадр» и повторите.');
+      fail('Программа «Хлопушка» не запущена или выключен MCP-сервер (Настройки → Внешний ИИ). Откройте «Хлопушка» и повторите.');
       return;
     }
     const type = res.headers.get('content-type') || '';
@@ -98,12 +98,12 @@ async function forward(msg: Msg) {
       return;
     }
     const text = await res.text();
-    if (!text.trim()) { if (!res.ok) fail(`«Кадр» ответил ошибкой ${res.status}`); return; }
+    if (!text.trim()) { if (!res.ok) fail(`«Хлопушка» ответил ошибкой ${res.status}`); return; }
     try {
       const body = JSON.parse(text);
       for (const m of Array.isArray(body) ? body : [body]) write(m);
     } catch {
-      fail(`«Кадр» ответил ошибкой ${res.status}`);
+      fail(`«Хлопушка» ответил ошибкой ${res.status}`);
     }
     return;
   }

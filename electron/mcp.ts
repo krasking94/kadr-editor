@@ -1,5 +1,6 @@
-// MCP: (1) встроенный сервер — через него любой ИИ (Claude, Cursor и др.) управляет «Кадром»;
+// MCP: (1) встроенный сервер — через него любой ИИ (Claude, Cursor и др.) управляет «Хлопушкой»;
 // (2) клиент — подключает внешние MCP-серверы, их инструменты получает встроенный помощник.
+import { app } from 'electron';
 import http from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -18,7 +19,7 @@ let serverState: { running: boolean; port: number; error?: string; lastClient?: 
 let knownClient = '';
 
 function buildServer(): Server {
-  const server = new Server({ name: 'kadr', version: '0.1.0' }, {
+  const server = new Server({ name: 'hlopushka', version: app.getVersion() }, {
     capabilities: { tools: {} },
     instructions: MCP_INSTRUCTIONS,
   });
@@ -64,7 +65,7 @@ export function startMcpServer(port: number): Promise<typeof serverState> {
       }
       const url = new URL(req.url || '/', 'http://127.0.0.1');
       if (url.pathname === '/' && req.method === 'GET') {
-        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end('Кадр: MCP-сервер работает. Адрес для ИИ: /mcp');
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end('Хлопушка: MCP-сервер работает. Адрес для ИИ: /mcp');
         return;
       }
       if (url.pathname !== '/mcp') { res.writeHead(404).end(); return; }
@@ -131,7 +132,7 @@ async function connect(config: McpClientConfig): Promise<void> {
   const entry: Connected = { config, tools: [], status: 'connecting' };
   clients.set(config.id, entry);
   try {
-    const client = new Client({ name: 'kadr', version: '0.1.0' });
+    const client = new Client({ name: 'hlopushka', version: '0.3.0' });
     const transport = config.type === 'http'
       ? new StreamableHTTPClientTransport(new URL(config.url || ''))
       : new StdioClientTransport({ command: config.command || '', args: config.args || [], env: { ...process.env } as Record<string, string> });

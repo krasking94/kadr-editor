@@ -9,7 +9,7 @@ import type { Clip, MediaClip, MediaItem, TextClip, Track, TrackKind, Transition
 import { clipDuration, clipEnd, COLOR_PRESETS, formatTime, MIN_CLIP, projectDuration, TRANSITIONS, transitionDuration } from '../../shared/timeline';
 import { commit, get, set, toast, useStore, type MediaCacheEntry } from '../state/store';
 import * as A from '../state/actions';
-import { saveSettings } from '../state/settings-actions';
+import { saveLayout, saveSettings } from '../state/settings-actions';
 import { DND_MEDIA, DND_TEXT } from '../lib/dnd';
 import { presetById } from '../lib/text-presets';
 import { commandById } from '../lib/commands';
@@ -40,7 +40,8 @@ export function Timeline() {
   const flash = useStore(s => s.flash);
   const cache = useStore(s => s.mediaCache);
   const snapping = useStore(s => s.settings.snapping);
-  const [height, setHeight] = useState(() => Math.round(Math.min(420, Math.max(250, window.innerHeight * 0.38))));
+  const savedHeight = useStore(s => s.settings.layout?.timeline);
+  const [height, setHeight] = useState(() => savedHeight || Math.round(Math.min(420, Math.max(250, window.innerHeight * 0.38))));
   const [scroll, setScroll] = useState({ left: 0, top: 0, width: 800 });
   const [drag, setDrag] = useState<Drag | null>(null);
   const [razorX, setRazorX] = useState<number | null>(null);
@@ -361,8 +362,9 @@ export function Timeline() {
   // ── Высота таймлайна ─────────────────────────────
   const onResize = (e: React.PointerEvent) => {
     const y0 = e.clientY, h0 = height;
-    const move = (ev: PointerEvent) => setHeight(Math.max(170, Math.min(window.innerHeight * 0.7, h0 - (ev.clientY - y0))));
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    let last = h0;
+    const move = (ev: PointerEvent) => { last = Math.round(Math.max(170, Math.min(window.innerHeight * 0.7, h0 - (ev.clientY - y0)))); setHeight(last); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); saveLayout({ timeline: last }); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   };

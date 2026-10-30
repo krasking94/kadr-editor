@@ -6,7 +6,10 @@ import * as A from '../state/actions';
 import * as S from '../state/smart';
 import { get, redo, set, toast, undo } from '../state/store';
 import { askAssistant } from '../state/assistant';
-import { saveSettings } from '../state/settings-actions';
+import { layoutOf, saveLayout, saveSettings } from '../state/settings-actions';
+import * as SC from '../state/script';
+import * as MT from '../state/media-tools';
+import { defaultLayout } from '../../shared/settings';
 
 export interface Command {
   id: string;
@@ -128,6 +131,12 @@ export const COMMANDS: Command[] = [
   { id: 'studio-voice', label: 'Студийный звук для всего ролика', group: 'ИИ', needsProject: true, run: () => { S.studioVoiceAll(true); } },
   { id: 'ai-review', label: 'ИИ-режиссёр: что улучшить', group: 'ИИ', needsProject: true, run: () => askAssistant(S.DIRECTOR_PROMPT, true) },
   { id: 'ai-chapters', label: 'Главы, описание и хэштеги', group: 'ИИ', needsProject: true, run: () => askAssistant(S.CHAPTERS_PROMPT) },
+  { id: 'text-pauses', label: 'Укоротить паузы по тексту речи', group: 'ИИ', needsProject: true, run: async () => { if (await SC.ensureTranscripts()) SC.shortenPauses(); } },
+  { id: 'text-fillers', label: 'Убрать слова-паразиты по тексту речи', group: 'ИИ', needsProject: true, run: async () => { if (await SC.ensureTranscripts()) SC.cutFillersFromText(); } },
+  { id: 'shorts', label: 'Нарезать на короткие ролики (Shorts)', group: 'ИИ', needsProject: true, run: () => { SC.findShorts().then(r => r.length && toast('success', `Нашёл моментов: ${r.length}`, { detail: 'Откройте вкладку «Shorts» слева, чтобы посмотреть и сохранить.' })); } },
+  { id: 'beats-cut', label: 'Подрезать клипы под ритм музыки', group: 'ИИ', needsProject: true, run: () => { MT.cutToBeats(2); } },
+  { id: 'beats-markers', label: 'Метки на долях музыки', group: 'ИИ', needsProject: true, run: () => { MT.beatMarkers(4); } },
+  { id: 'proxies', label: 'Лёгкие копии для всех видео', group: 'Клип', needsProject: true, run: () => MT.requestProxies(get().project!.media.filter(m => m.kind === 'video' && !m.proxy).map(m => m.id)) },
   { id: 'srt-open', label: 'Открыть субтитры (SRT)', group: 'Файл', needsProject: true, run: () => { S.importSubtitles(); } },
   { id: 'srt-save', label: 'Сохранить субтитры (SRT)', group: 'Файл', needsProject: true, run: () => { S.exportSubtitles(); } },
 
@@ -136,6 +145,8 @@ export const COMMANDS: Command[] = [
   { id: 'settings', label: 'Настройки', group: 'Окно', keys: ['Ctrl+,'], run: () => set({ dialog: 'settings', settingsTab: 'general' }) },
   { id: 'ai-settings', label: 'Подключить нейросеть', group: 'Окно', run: () => set({ dialog: 'settings', settingsTab: 'ai' }) },
   { id: 'mcp-settings', label: 'Подключение внешнего ИИ (MCP)', group: 'Окно', run: () => set({ dialog: 'settings', settingsTab: 'mcp' }) },
+  { id: 'swap-panels', label: 'Поменять панели местами (файлы слева / справа)', group: 'Окно', run: () => { saveLayout({ swap: !layoutOf(get().settings).swap }); } },
+  { id: 'reset-panels', label: 'Вернуть панели как было', group: 'Окно', run: () => { saveSettings({ layout: defaultLayout() }); } },
   { id: 'theme', label: 'Сменить тему (тёмная / светлая)', group: 'Окно', run: () => {
     saveSettings({ theme: document.documentElement.dataset.theme === 'light' ? 'dark' : 'light' });
   } },
