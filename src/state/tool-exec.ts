@@ -7,6 +7,8 @@ import { TOOL_TITLES } from '../../shared/tools';
 import * as A from './actions';
 import { commit, get, redo, set, undo } from './store';
 import { generate } from './generate';
+import * as S from './smart';
+import type { ShapeKind } from '../lib/stickers';
 
 export interface ToolOutput { text: string; image?: string; isError?: boolean }
 
@@ -22,12 +24,13 @@ function projectSummary() {
     tracks: p.tracks.map(t => ({
       id: t.id, kind: t.kind, name: t.name, muted: t.muted, locked: t.locked, hidden: t.hidden,
       clips: t.clips.map(c => c.type === 'text'
-        ? { id: c.id, type: 'text', text: c.text, start: r2(c.start), end: r2(c.start + c.duration), style: c.style, anim_in: c.animIn, anim_out: c.animOut, subtitle: !!c.subtitle }
+        ? { id: c.id, type: 'text', text: c.text, start: r2(c.start), end: r2(c.start + c.duration), style: c.style, anim_in: c.animIn, anim_out: c.animOut, subtitle: !!c.subtitle, ...(c.words?.length ? { word_highlight: c.highlight || true } : {}) }
         : {
           id: c.id, type: 'media', media_id: c.mediaId, media_name: p.media.find(m => m.id === c.mediaId)?.name,
           start: r2(c.start), end: r2(c.start + clipDuration(c)), in: r2(c.in), out: r2(c.out), speed: c.speed,
           volume: c.volume, muted: c.muted, fit: c.fit, transform: c.transform, animate: c.animate, ...(c.animate ? { transform_end: c.transformEnd } : {}),
           color: c.color, effects: c.effects, transition: c.transition, fade_in: c.fadeIn, fade_out: c.fadeOut, duck: c.duck,
+          voice: c.voice, denoise: c.denoise, key: c.key, ...(c.path?.length ? { face_tracking: true } : {}), ...(c.origin ? { processed: c.origin.done } : {}),
         }),
     })),
     markers: p.markers.map(m => ({ time: r2(m.time), label: m.label })),
@@ -74,11 +77,12 @@ export async function execTool(name: string, a: any, source: string): Promise<To
       if (!f) return { text: 'No such clip', isError: true };
       if (f.clip.type !== 'media') return { text: 'This is a text clip, use update_text', isError: true };
       const patch: A.MediaClipPatch = {};
-      const map: Record<string, keyof MediaClip> = { speed: 'speed', volume: 'volume', muted: 'muted', fade_in: 'fadeIn', fade_out: 'fadeOut', audio_fade_in: 'audioFadeIn', audio_fade_out: 'audioFadeOut', fit: 'fit', animate: 'animate', duck: 'duck' };
+      const map: Record<string, keyof MediaClip> = { speed: 'speed', volume: 'volume', muted: 'muted', fade_in: 'fadeIn', fade_out: 'fadeOut', audio_fade_in: 'audioFadeIn', audio_fade_out: 'audioFadeOut', fit: 'fit', animate: 'animate', duck: 'duck', voice: 'voice', denoise: 'denoise' };
       for (const [k, v] of Object.entries(map)) if (a[k] !== undefined) (patch as any)[v] = a[k];
       if (a.transform) patch.transform = a.transform;
       if (a.transform_end) patch.transformEnd = a.transform_end;
-      if (a.color) patch.color = a.color;
+      if (a.color) patch.color = { ...a.color, ...(a.color.lut === '' ? { lut: undefined } : {}) };
+      if (a.key !== undefined) patch.key = a.key ? { color: a.key.color || '#00ff00', similarity: a.key.similarity ?? 0.3, blend: a.key.blend ?? 0.1 } : undefined;
       if (a.effects) patch.effects = a.effects;
       A.updateMediaClip(a.clip_id, patch, 'Настройки клипа изменены', { source, coalesce: '' });
       return ok('Updated');
@@ -135,6 +139,39 @@ export async function execTool(name: string, a: any, source: string): Promise<To
     case 'detect_scenes': {
       const times = await A.detectScenes(a.clip_id, a.split !== false, a.sensitivity ?? 0.4, source);
       return ok('Scene changes (timeline seconds)', times.map(r2));
+    }
+    case 'stabilize_clip':
+    case 'reverse_clip':
+      await S.processClip(a.clip_id, name === 'stabilize_clip' ? 'stabilize' : 'reverse', source);
+      return ok(name === 'stabilize_clip' ? 'Stabilized' : 'Reversed');
+    case 'auto_reframe': {
+      const r = await S.autoReframe({ width: a.width, height: a.height, source });
+      return ok(`Reframed ${r.clips} clips, face found in ${r.faces}`);
+    }
+    case 'remove_fillers': {
+      const r = await S.removeFillers({ fillers: a.words, confirm: false, source });
+      return ok(`Removed ${r.count} filler words (${r2(r.seconds)}s)`, r.words.slice(0, 50));
+    }
+    case 'make_subtitles': {
+      const n = await S.makeSubtitles({ style: a.style, words: a.words, highlight: a.highlight, language: a.language, source });
+      return ok(`Created ${n} subtitle clips`);
+    }
+    case 'translate_subtitles':
+      return ok(`Translated ${await S.translateSubtitles(String(a.language), source)} subtitle clips`);
+    case 'export_subtitles': {
+      const path = await S.exportSubtitles(a.path || `${get().info?.videosDir || ''}/${s.project.name.replace(/[\\/:*?"<>|]+/g, '_')}.srt`);
+      return path ? ok('Saved', { path }) : { text: 'No subtitles to save', isError: true };
+    }
+    case 'add_sticker': {
+      if (a.time !== undefined) set({ playhead: Math.max(0, Number(a.time)) });
+      const id = a.shape ? await S.addShape(a.shape as ShapeKind, a.color || '#ff3b5c', source) : S.addEmoji(String(a.emoji || '🔥'), source);
+      return id ? ok('Sticker added', { clip_id: id }) : { text: 'Could not add sticker', isError: true };
+    }
+    case 'studio_voice':
+      return ok(`Studio voice ${a.on === false ? 'off' : 'on'} for ${S.studioVoiceAll(a.on !== false, source)} clips`);
+    case 'analyze_audio': {
+      const r = await S.analyzeLoudness();
+      return ok('Loudness', { lufs: r2(r.lufs), true_peak_db: r2(r.peak), range_lu: r2(r.lra), verdict_ru: S.loudnessVerdict(r.lufs), export_target_lufs: get().settings.loudness || null });
     }
     case 'set_project': {
       commit('Настройки проекта изменены', p => {
