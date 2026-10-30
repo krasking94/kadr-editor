@@ -1,6 +1,7 @@
 // Превращает проект «Хлопушки» в команду FFmpeg. Чистая функция: её легко проверить тестами.
 import type { ExportOptions, MediaClip, MediaItem, Project, TextClip, TextRender } from './types';
 import { COLOR_PRESETS, clipDuration, layoutProject, projectDuration, transitionDuration } from './timeline';
+import { isStatic, keyExpr, keysOf, range } from './keyframes';
 
 export interface ExportPlan {
   args: string[];
@@ -83,45 +84,48 @@ function layerChain(c: MediaClip, m: MediaItem, W: number, H: number, fps: numbe
   const color = colorFilters(c);
   const f: string[] = [];
   const base = baseLayerSize(m, c.fit, W, H);
-  const a = c.transform, b = c.animate ? c.transformEnd : c.transform;
-  const k = `clip((t-${n(tOrigin)})/${n(dur)},0,1)`;
-  const lerp = (u: number, v: number) => (u === v ? n(u) : `(${n(u)}+(${n(v - u)})*${k})`);
+  // положение, размер, поворот и прозрачность — по ключевым кадрам (или от начала к концу клипа)
+  const keys = keysOf(c);
+  const k0 = keys[0];
+  const scaleStatic = isStatic(keys, 'scale');
+  const smax = range(keys, 'scale').max;
   const path = c.path && c.path.length ? c.path : null;
+  const centered = isStatic(keys, 'x') && isStatic(keys, 'y') && k0.x === 0.5 && k0.y === 0.5;
+  const rotates = keys.some(k => k.rotation);
   // Для «заполнить» обрезаем лишнее за пределами кадра только когда масштаб не анимируется и слой стоит по центру
-  const fillCrop = c.fit === 'fill' && a.scale === b.scale && !path;
-  if (a.scale === b.scale) {
-    f.push(`scale=${even(base.w * a.scale)}:${even(base.h * a.scale)}`);
-    if (fillCrop && a.x === 0.5 && a.y === 0.5 && a.rotation === 0 && b.rotation === 0) {
-      f.push(`crop=${even(Math.min(base.w * a.scale, W * Math.max(1, a.scale)))}:${even(Math.min(base.h * a.scale, H * Math.max(1, a.scale)))}`);
+  const fillCrop = c.fit === 'fill' && scaleStatic && !path;
+  if (scaleStatic) {
+    f.push(`scale=${even(base.w * k0.scale)}:${even(base.h * k0.scale)}`);
+    if (fillCrop && centered && !rotates) {
+      f.push(`crop=${even(Math.min(base.w * k0.scale, W * Math.max(1, k0.scale)))}:${even(Math.min(base.h * k0.scale, H * Math.max(1, k0.scale)))}`);
     }
   } else {
     // масштаб меняется во времени: t внутри scale — локальное время слоя
-    const lk = `clip(t/${n(dur)},0,1)`;
-    const s = `(${n(a.scale)}+(${n(b.scale - a.scale)})*${lk})`;
+    const s = keyExpr(keys, 'scale', 't');
     f.push(`scale=w='2*trunc(${n(base.w)}*${s}/2)':h='2*trunc(${n(base.h)}*${s}/2)':eval=frame`);
   }
   f.push('format=yuva420p');
-  if (a.scale !== b.scale) {
+  if (!scaleStatic) {
     // Размер кадра меняется каждый кадр, а поворот, затухание и прозрачность в новых FFmpeg
     // так не умеют. Кладём слой на прозрачный холст постоянного размера по центру.
-    const smax = Math.max(a.scale, b.scale);
     const pw = Math.max(2, Math.ceil((base.w * smax) / 2) * 2), ph = Math.max(2, Math.ceil((base.h * smax) / 2) * 2);
     f.push(`pad=w=${pw}:h=${ph}:x='(ow-iw)/2':y='(oh-ih)/2':color=black@0:eval=frame`);
   }
-  if (a.rotation || b.rotation) {
-    const smax = Math.max(a.scale, b.scale);
+  if (rotates) {
     const diag = even(Math.hypot(base.w * smax, base.h * smax));
-    const lk = `clip(t/${n(dur)},0,1)`;
-    const ang = a.rotation === b.rotation ? n((a.rotation * Math.PI) / 180) : `(${n((a.rotation * Math.PI) / 180)}+(${n(((b.rotation - a.rotation) * Math.PI) / 180)})*${lk})`;
-    f.push(`rotate=a='${ang}':ow=${diag}:oh=${diag}:c=none`);
+    f.push(`rotate=a='${keyExpr(keys, 'rotation', 't', v => (v * Math.PI) / 180)}':ow=${diag}:oh=${diag}:c=none`);
   }
-  const op = a.opacity;
-  if (op < 1) f.push(`colorchannelmixer=aa=${n(op, 3)}`);
+  if (isStatic(keys, 'opacity')) {
+    if (k0.opacity < 1) f.push(`colorchannelmixer=aa=${n(k0.opacity, 3)}`);
+  } else {
+    // прозрачность меняется во времени: умножаем альфу на формулу от времени слоя
+    f.push(`geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='alpha(X,Y)*clip(${keyExpr(keys, 'opacity', 'T')},0,1)'`);
+  }
   if (c.fadeIn > 0) f.push(`fade=t=in:st=0:d=${n(Math.min(c.fadeIn, dur))}:alpha=1`);
   if (c.fadeOut > 0) f.push(`fade=t=out:st=${n(Math.max(0, dur - c.fadeOut))}:d=${n(Math.min(c.fadeOut, dur))}:alpha=1`);
   const T = `(t-${n(tOrigin)})`;
-  const px = path ? pathExpr(path.map(p => ({ t: p.t, v: p.x })), T) : lerp(a.x, b.x);
-  const py = path ? pathExpr(path.map(p => ({ t: p.t, v: p.y })), T) : lerp(a.y, b.y);
+  const px = path ? pathExpr(path.map(p => ({ t: p.t, v: p.x })), T) : keyExpr(keys, 'x', T);
+  const py = path ? pathExpr(path.map(p => ({ t: p.t, v: p.y })), T) : keyExpr(keys, 'y', T);
   const x = `'${px}*W-w/2'`;
   const y = `'${py}*H-h/2'`;
   // Собирает граф слоя: из входа src в выход out; suffix — фильтры после основной цепочки

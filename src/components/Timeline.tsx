@@ -563,7 +563,7 @@ const ClipView = memo(function ClipView(p: {
   if (mc) {
     if (mc.speed !== 1) badges.push(<span key="s"><Gauge size={9} />×{+mc.speed.toFixed(2)}</span>);
     if (mc.color.preset !== 'none') badges.push(<span key="c">{COLOR_PRESETS[mc.color.preset]?.label}</span>);
-    if (mc.animate) badges.push(<span key="a"><Move size={9} /></span>);
+    if (mc.animate || mc.keys?.length) badges.push(<span key="a"><Move size={9} /></span>);
     if (mc.muted) badges.push(<span key="m"><VolumeX size={9} /></span>);
     if (mc.duck) badges.push(<span key="d">тише под голос</span>);
   }
@@ -581,6 +581,10 @@ const ClipView = memo(function ClipView(p: {
         {showWave && <Wave clip={mc!} media={m!} peaks={p.cache!.waveform!} width={width} height={m!.kind === 'audio' ? p.height - 28 : 18} />}
         {mc && mc.fadeIn > 0 && <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: mc.fadeIn * p.zoom, background: 'linear-gradient(to right, rgba(0,0,0,.55), transparent)', pointerEvents: 'none' }} />}
         {mc && mc.fadeOut > 0 && <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: mc.fadeOut * p.zoom, background: 'linear-gradient(to left, rgba(0,0,0,.55), transparent)', pointerEvents: 'none' }} />}
+        {mc?.keys?.map(k => k.t <= dur + 1e-3 && (
+          <div key={k.t} className="clip-key" style={{ left: k.t * p.zoom }} data-tip="Ключевой кадр — щёлкните, чтобы перейти" data-tip-pos="top"
+            onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); set({ playhead: c.start + k.t, playing: false, selection: [c.id] }); }} />
+        ))}
         {!p.razor && !p.track.locked && <>
           <div className="handle l" onPointerDown={e => p.onDown(e, 'l')} data-tip="Потяните, чтобы обрезать начало" data-tip-pos="top" />
           <div className="handle r" onPointerDown={e => p.onDown(e, 'r')} data-tip="Потяните, чтобы обрезать конец" data-tip-pos="top" />

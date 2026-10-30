@@ -3,13 +3,13 @@ import { useEffect, useState } from 'react';
 import {
   AlignCenter, AlignLeft, AlignRight, AudioLines, Bold, CaseUpper, Clapperboard, Film, Gauge, Image as ImageIcon, Italic, Lightbulb,
   Move, Music, Palette, RotateCcw, Scissors, SlidersHorizontal, Snowflake, Sparkles, Trash2, Type, Volume2, Blend,
-  Vibrate, Rewind, Undo2, ScanFace, Pipette, FileImage, Mic2, Headphones, Highlighter,
+  Vibrate, Rewind, Undo2, ScanFace, Pipette, FileImage, Mic2, Headphones, Highlighter, Diamond, ChevronLeft, ChevronRight, X,
 } from 'lucide-react';
 import { mediaUrl } from '../api';
 import type { MediaClip, MediaItem, TextAnim, TextClip, TransitionType } from '../../shared/types';
 import {
   clipDuration, COLOR_PRESETS, defaultColor, defaultEffects, defaultTransform, findClip, FORMAT_PRESETS, formatTime, mainTrack,
-  projectDuration, TEXT_ANIMS, TRANSITIONS,
+  projectDuration, TEXT_ANIMS, TRANSITIONS, transformAt,
 } from '../../shared/timeline';
 import { commit, set, useStore } from '../state/store';
 import * as A from '../state/actions';
@@ -17,6 +17,7 @@ import * as S from '../state/smart';
 import { api } from '../api';
 import { FONTS } from '../lib/fonts';
 import { keysOf, prettyKeys } from '../lib/commands';
+import { keysOf as clipKeys, KEY_SNAP, removeKey, setKeyAt } from '../../shared/keyframes';
 import { ColorInput, Segmented, Slider, Switch } from './ui';
 
 export function Inspector() {
@@ -159,6 +160,9 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
   const main = mainTrack(project);
   const prev = trackKind === 'main' && index > 0 ? main.clips[index - 1] : null;
   const where = trackKind === 'main' ? 'основное видео' : trackKind === 'video' ? 'наложение' : 'звук';
+  // с ключевыми кадрами ползунки показывают, где клип сейчас, под курсором
+  const playhead = useStore(s => (clip.keys?.length ? s.playhead : 0));
+  const tr = clip.keys?.length ? transformAt(clip, playhead - clip.start) : clip.transform;
 
   return (
     <>
@@ -192,12 +196,13 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
               <h4>Размер в кадре</h4>
               <Segmented value={clip.fit} onChange={v => up({ fit: v }, v === 'fill' ? 'Заполнить кадр' : 'Вписать в кадр', '')}
                 options={[{ value: 'fit', label: 'Вписать', tip: 'Видно весь кадр, по краям могут быть полосы' }, { value: 'fill', label: 'Заполнить', tip: 'Без полос, края обрежутся' }]} />
-              <Slider label="Масштаб" value={clip.transform.scale} min={0.05} max={4} step={0.01} def={1} format={v => Math.round(v * 100) + '%'} onChange={v => up({ transform: { scale: v } }, 'Масштаб')} />
-              <Slider label="По горизонтали" value={clip.transform.x} min={-0.5} max={1.5} step={0.005} def={0.5} format={v => Math.round((v - 0.5) * 100) + '%'} onChange={v => up({ transform: { x: v } }, 'Положение')} hint="Можно просто перетащить картинку в окне просмотра" />
-              <Slider label="По вертикали" value={clip.transform.y} min={-0.5} max={1.5} step={0.005} def={0.5} format={v => Math.round((v - 0.5) * 100) + '%'} onChange={v => up({ transform: { y: v } }, 'Положение')} />
-              <Slider label="Поворот" value={clip.transform.rotation} min={-180} max={180} step={1} def={0} unit="°" onChange={v => up({ transform: { rotation: v } }, 'Поворот')} />
-              <Slider label="Непрозрачность" value={clip.transform.opacity} min={0} max={1} step={0.01} def={1} format={v => Math.round(v * 100) + '%'} onChange={v => up({ transform: { opacity: v } }, 'Прозрачность')} />
-              <button className="btn small ghost" onClick={() => up({ transform: trackKind === 'video' ? { x: 0.75, y: 0.27, scale: 0.4, rotation: 0, opacity: 1 } : defaultTransform() }, 'Положение сброшено', '')}><RotateCcw size={13} /> Сбросить положение</button>
+              <KeyBar clip={clip} up={up} />
+              <Slider label="Масштаб" value={tr.scale} min={0.05} max={4} step={0.01} def={1} format={v => Math.round(v * 100) + '%'} onChange={v => up({ transform: { scale: v } }, 'Масштаб')} />
+              <Slider label="По горизонтали" value={tr.x} min={-0.5} max={1.5} step={0.005} def={0.5} format={v => Math.round((v - 0.5) * 100) + '%'} onChange={v => up({ transform: { x: v } }, 'Положение')} hint="Можно просто перетащить картинку в окне просмотра" />
+              <Slider label="По вертикали" value={tr.y} min={-0.5} max={1.5} step={0.005} def={0.5} format={v => Math.round((v - 0.5) * 100) + '%'} onChange={v => up({ transform: { y: v } }, 'Положение')} />
+              <Slider label="Поворот" value={tr.rotation} min={-180} max={180} step={1} def={0} unit="°" onChange={v => up({ transform: { rotation: v } }, 'Поворот')} />
+              <Slider label="Непрозрачность" value={tr.opacity} min={0} max={1} step={0.01} def={1} format={v => Math.round(v * 100) + '%'} onChange={v => up({ transform: { opacity: v } }, 'Прозрачность')} />
+              <button className="btn small ghost" onClick={() => up({ keys: [], transform: trackKind === 'video' ? { x: 0.75, y: 0.27, scale: 0.4, rotation: 0, opacity: 1 } : defaultTransform() }, 'Положение сброшено', '')}><RotateCcw size={13} /> Сбросить положение</button>
             </div>
             <div className="insp-section">
               <h4>Появление и исчезновение</h4>
@@ -302,14 +307,15 @@ function MotionTab({ clip, up }: { clip: MediaClip; up: (patch: A.MediaClipPatch
     <>
       <div className="insp-section">
         <div className="tip-card"><Move size={18} color="var(--accent)" style={{ flex: 'none' }} /><div>Клип плавно меняет размер и положение от начала к концу. Так «оживают» фотографии.</div></div>
-        <Switch label="Включить движение" checked={clip.animate} onChange={v => up({ animate: v }, v ? 'Движение включено' : 'Движение выключено', '')} />
+        {!clip.keys?.length && <Switch label="Включить движение" checked={clip.animate} onChange={v => up({ animate: v }, v ? 'Движение включено' : 'Движение выключено', '')} />}
         <div className="row wrap" style={{ gap: 5 }}>
           {PRESETS.map(pr => (
-            <button key={pr.label} className="chip" onClick={() => up({ animate: true, transform: pr.start, transformEnd: { ...clip.transform, ...pr.start, ...pr.end } }, `Движение «${pr.label}»`, '')}>{pr.label}</button>
+            <button key={pr.label} className="chip" onClick={() => up({ keys: [], animate: true, transform: pr.start, transformEnd: { ...clip.transform, ...pr.start, ...pr.end } }, `Движение «${pr.label}»`, '')}>{pr.label}</button>
           ))}
         </div>
       </div>
-      {clip.animate && (
+      <KeysSection clip={clip} up={up} />
+      {clip.animate && !clip.keys?.length && (
         <div className="insp-section">
           <h4>В конце клипа</h4>
           <Slider label="Масштаб" value={clip.transformEnd.scale} min={0.05} max={4} step={0.01} def={t.scale} format={v => Math.round(v * 100) + '%'} onChange={v => up({ transformEnd: { scale: v } }, 'Движение: масштаб')} />
@@ -321,6 +327,72 @@ function MotionTab({ clip, up }: { clip: MediaClip; up: (patch: A.MediaClipPatch
         </div>
       )}
     </>
+  );
+}
+
+type Up = (patch: A.MediaClipPatch, label: string, key?: string) => void;
+
+// Ключевые кадры: ◆ ставит или убирает ключ под курсором, стрелки прыгают к соседним ключам
+function KeyBar({ clip, up }: { clip: MediaClip; up: Up }) {
+  const playhead = useStore(s => s.playhead);
+  const local = playhead - clip.start;
+  const inside = local >= -1e-3 && local <= clipDuration(clip) + 1e-3;
+  const keys = clip.keys || [];
+  const onKey = keys.find(k => Math.abs(k.t - local) < KEY_SNAP);
+  const seek = (t: number) => set({ playhead: clip.start + t, playing: false });
+  if (!keys.length) {
+    return (
+      <button className="btn small" disabled={!inside} style={{ alignSelf: 'flex-start' }}
+        data-tip={inside ? 'Запомнить, как клип выглядит в этот момент. Потом передвиньте курсор и поменяйте размер или положение — клип плавно перейдёт от ключа к ключу' : 'Поставьте курсор таймлайна на этот клип'}
+        onClick={() => up({ keys: setKeyAt(clip, local), animate: false }, 'Ключевой кадр', '')}>
+        <Diamond size={13} /> Ключевые кадры
+      </button>
+    );
+  }
+  const prev = [...keys].reverse().find(k => k.t < local - KEY_SNAP / 2);
+  const next = keys.find(k => k.t > local + KEY_SNAP / 2);
+  return (
+    <div className="keybar">
+      <button className="icon-btn small" disabled={!prev} data-tip="К предыдущему ключу" onClick={() => prev && seek(prev.t)}><ChevronLeft size={15} /></button>
+      <button className={'key-toggle' + (onKey ? ' on' : '')} disabled={!inside}
+        data-tip={onKey ? 'Убрать этот ключ' : 'Поставить ключ здесь'}
+        onClick={() => up({ keys: onKey ? removeKey(clip, onKey.t) : setKeyAt(clip, local), ...(onKey && keys.length === 1 ? { transform: transformAt(clip, local) } : {}) }, onKey ? 'Ключ убран' : 'Ключевой кадр', '')}>
+        <Diamond size={14} fill={onKey ? 'currentColor' : 'none'} />
+      </button>
+      <button className="icon-btn small" disabled={!next} data-tip="К следующему ключу" onClick={() => next && seek(next.t)}><ChevronRight size={15} /></button>
+      <span className="small-text muted" style={{ flex: 1 }}>{!inside ? 'Курсор не на клипе' : onKey ? 'Меняйте — правится этот ключ' : 'Измените — появится ключ'}</span>
+      <button className="icon-btn small" data-tip="Убрать все ключи (клип останется как сейчас под курсором)" onClick={() => up({ keys: [], transform: transformAt(clip, Math.max(0, local)) }, 'Ключи убраны', '')}><Trash2 size={13} /></button>
+    </div>
+  );
+}
+
+function KeysSection({ clip, up }: { clip: MediaClip; up: Up }) {
+  const keys = clip.keys || [];
+  const fps = useStore(s => s.project?.fps || 30);
+  const seek = (t: number) => set({ playhead: clip.start + t, playing: false });
+  return (
+    <div className="insp-section">
+      <h4><Diamond size={14} /> Ключевые кадры</h4>
+      {!keys.length && <div className="small-text muted">Как в больших редакторах: поставьте курсор в нужный момент, нажмите ◆ и меняйте размер, положение, поворот или прозрачность. Затем передвиньте курсор и поменяйте ещё раз — клип сам плавно пройдёт между этими точками. Можно двигать картинку прямо мышкой в окне просмотра.</div>}
+      <KeyBar clip={clip} up={up} />
+      {keys.length > 0 && (
+        <div className="key-list">
+          {clipKeys(clip).map((k, i, all) => (
+            <div key={k.t} className="key-row">
+              <button className="key-time" onClick={() => seek(k.t)} data-tip="Перейти к ключу"><Diamond size={11} fill="currentColor" /> {formatTime(k.t, fps, true)}</button>
+              <span className="small-text muted">{Math.round(k.scale * 100)}%{k.rotation ? ` · ${Math.round(k.rotation)}°` : ''}{k.opacity < 1 ? ` · ${Math.round(k.opacity * 100)}% видно` : ''}</span>
+              {i < all.length - 1 && (
+                <button className="chip" data-tip="Как двигаться к следующему ключу: плавно разгоняясь и тормозя, или ровно с одной скоростью"
+                  onClick={() => up({ keys: all.map(q => (q.t === k.t ? { ...q, ease: q.ease === 'linear' ? 'smooth' : 'linear' } : q)) }, 'Плавность движения', '')}>
+                  {k.ease === 'linear' ? 'ровно' : 'плавно'}
+                </button>
+              )}
+              <button className="icon-btn small" data-tip="Убрать ключ" onClick={() => up({ keys: removeKey(clip, k.t), ...(all.length === 1 ? { transform: { x: k.x, y: k.y, scale: k.scale, rotation: k.rotation, opacity: k.opacity } } : {}) }, 'Ключ убран', '')}><X size={13} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

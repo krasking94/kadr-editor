@@ -94,7 +94,14 @@ export interface MediaClip {
   voice?: boolean; // «голос как в студии»: тембр, выравнивание громкости
   key?: ChromaKey; // убрать фон заданного цвета (хромакей)
   path?: PathPoint[]; // движение центра слоя по точкам (слежение за лицом), время от начала клипа
+  keys?: Keyframe[]; // ключевые кадры (если есть, заменяют transform/animate)
   origin?: ClipOrigin; // клип сделан из обработанной копии файла (стабилизация, задом наперёд)
+}
+
+// Ключевой кадр: состояние слоя в момент t (секунды от начала клипа на таймлайне)
+export interface Keyframe extends Transform {
+  t: number;
+  ease?: 'smooth' | 'linear'; // как двигаться к следующему ключу: плавно (по умолчанию) или ровно
 }
 
 export interface ChromaKey {

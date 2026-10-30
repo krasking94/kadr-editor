@@ -580,3 +580,18 @@ body.pane-dragging video, body.pane-dragging iframe { pointer-events: none; }
 .check.on { background: var(--accent); border-color: var(--accent); }
 @keyframes slide-up { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
 .chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+
+/* Ключевые кадры */
+.keybar { display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line); }
+.key-toggle { width: 30px; height: 26px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--panel); color: var(--muted); display: grid; place-items: center; cursor: pointer; transition: color .15s, background .15s, transform .15s; }
+.key-toggle:hover:not(:disabled) { color: var(--accent); transform: scale(1.06); }
+.key-toggle.on { color: #ffc93c; border-color: #ffc93c; background: rgba(255, 201, 60, .12); }
+.key-toggle:disabled { opacity: .4; cursor: default; }
+.key-list { display: flex; flex-direction: column; gap: 3px; }
+.key-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 8px; }
+.key-row:hover { background: var(--hover); }
+.key-row > .small-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-time { border: 0; background: transparent; color: #ffc93c; font: 600 12px var(--mono, monospace); display: inline-flex; align-items: center; gap: 5px; cursor: pointer; padding: 3px 4px; border-radius: 6px; }
+.key-time:hover { background: rgba(255, 201, 60, .12); }
+.clip-key { position: absolute; bottom: 4px; width: 11px; height: 11px; margin-left: -5.5px; transform: rotate(45deg); background: #ffc93c; border: 1px solid rgba(0, 0, 0, .55); border-radius: 2px; z-index: 3; cursor: pointer; box-shadow: 0 0 6px rgba(255, 201, 60, .6); }
+.clip-key:hover { transform: rotate(45deg) scale(1.35); }

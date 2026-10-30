@@ -1,7 +1,7 @@
 // Выполнение команд ИИ. Каждая команда — обычное действие редактора, поэтому пользователь
 // видит изменение сразу и может отменить его.
 import { api } from '../api';
-import type { MediaClip, TextAnim, TransitionType } from '../../shared/types';
+import type { Keyframe, MediaClip, TextAnim, TransitionType } from '../../shared/types';
 import { clipDuration, findClip, FORMAT_PRESETS, projectDuration } from '../../shared/timeline';
 import { TOOL_TITLES } from '../../shared/tools';
 import * as A from './actions';
@@ -84,6 +84,14 @@ export async function execTool(name: string, a: any, source: string): Promise<To
       for (const [k, v] of Object.entries(map)) if (a[k] !== undefined) (patch as any)[v] = a[k];
       if (a.transform) patch.transform = a.transform;
       if (a.transform_end) patch.transformEnd = a.transform_end;
+      if (Array.isArray(a.keyframes)) {
+        const b = (f.clip as MediaClip).transform;
+        patch.keys = a.keyframes.map((k: any) => ({
+          t: Math.max(0, Number(k.time) || 0), x: k.x ?? b.x, y: k.y ?? b.y, scale: k.scale ?? b.scale, rotation: k.rotation ?? b.rotation, opacity: k.opacity ?? b.opacity,
+          ...(k.ease === 'linear' ? { ease: 'linear' as const } : {}),
+        })).sort((p: Keyframe, q: Keyframe) => p.t - q.t);
+        if (patch.keys!.length) patch.animate = false;
+      }
       if (a.color) patch.color = { ...a.color, ...(a.color.lut === '' ? { lut: undefined } : {}) };
       if (a.key !== undefined) patch.key = a.key ? { color: a.key.color || '#00ff00', similarity: a.key.similarity ?? 0.3, blend: a.key.blend ?? 0.1 } : undefined;
       if (a.effects) patch.effects = a.effects;
