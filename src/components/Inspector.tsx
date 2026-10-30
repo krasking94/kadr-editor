@@ -306,7 +306,7 @@ function MotionTab({ clip, up }: { clip: MediaClip; up: (patch: A.MediaClipPatch
   return (
     <>
       <div className="insp-section">
-        <div className="tip-card"><Move size={18} color="var(--accent)" style={{ flex: 'none' }} /><div>Клип плавно меняет размер и положение от начала к концу. Так «оживают» фотографии.</div></div>
+        <div className="tip-card"><Move size={18} color="var(--accent)" style={{ flex: 'none' }} /><div>Заготовки ниже плавно меняют размер и положение от начала к концу клипа — так «оживают» фотографии. Для точного движения — ключевые кадры.</div></div>
         {!clip.keys?.length && <Switch label="Включить движение" checked={clip.animate} onChange={v => up({ animate: v }, v ? 'Движение включено' : 'Движение выключено', '')} />}
         <div className="row wrap" style={{ gap: 5 }}>
           {PRESETS.map(pr => (
