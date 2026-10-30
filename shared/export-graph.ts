@@ -371,6 +371,9 @@ export function buildExportArgs(
       f.push(`atrim=duration=${n(dur)}`);
       const ms = Math.round(c.start * 1000);
       if (ms > 0) f.push(`adelay=${ms}:all=1`);
+      // все дорожки дотягиваем тишиной до конца ролика: тогда amix и приглушение музыки
+      // не зависят от того, какая дорожка закончилась раньше (в новых FFmpeg звук иногда обрывался)
+      f.push(`apad=whole_dur=${n(total)}`);
       const out = L('a');
       graph.push(`[${idx}:a]${f.join(',')}[${out}]`);
       (track.kind === 'audio' && c.duck ? duckAudio : voiceAudio).push(out);
