@@ -418,10 +418,12 @@ function RecordPanel() {
   useEffect(() => () => { rec.current?.state === 'recording' && rec.current.stop(); release(); }, []);
 
   // Запись экрана: сначала выбираем, что записывать
+  const [listing, setListing] = useState(false);
   const listScreens = async () => {
     release();
     setError('');
-    try { setSources(await api.screenSources()); setState('idle'); } catch { setError('Не удалось получить список экранов.'); }
+    setListing(true);
+    try { setSources(await api.screenSources()); setState('idle'); } catch { setError('Не удалось получить список экранов.'); } finally { setListing(false); }
   };
 
   const prepare = async (m = mode, screenId?: string) => {
@@ -545,7 +547,7 @@ function RecordPanel() {
         )}
         {error && <div className="warning-box"><TriangleAlert size={16} color="var(--warn)" /><div className="small-text">{error}</div></div>}
         {state === 'idle' && mode !== 'screen' && <button className="btn big" onClick={() => prepare()}>{mode === 'mic' ? <Mic size={17} /> : <Camera size={17} />} Включить {mode === 'mic' ? 'микрофон' : 'камеру'}</button>}
-        {state === 'idle' && mode === 'screen' && !sources && <button className="btn big" onClick={listScreens}><Monitor size={17} /> Выбрать, что записывать</button>}
+        {state === 'idle' && mode === 'screen' && !sources && <button className="btn big" disabled={listing} onClick={listScreens}><Monitor size={17} /> {listing ? 'Ищу экраны и окна…' : 'Выбрать, что записывать'}</button>}
         {sources && <button className="btn small ghost" onClick={() => setSources(null)}>Отмена</button>}
         {state === 'ready' && <button className="btn primary big" onClick={start}><span style={{ width: 12, height: 12, borderRadius: '50%', background: '#fff' }} /> Начать запись</button>}
         {state === 'rec' && <button className="btn danger big" onClick={stop}><Square size={15} fill="currentColor" /> Остановить ({formatTime(elapsed)})</button>}
@@ -556,8 +558,6 @@ function RecordPanel() {
 }
 
 // ── ИИ-инструменты ───────────────────────────────────
-export const DIRECTOR_PROMPT = 'Посмотри мой ролик как опытный режиссёр монтажа. Оцени начало (цепляет ли первые 3 секунды), темп, затянутые места, звук, субтитры, цвет и концовку. Дай 5–7 конкретных советов с таймкодами, по важности. Потом спроси, какие из них сделать.';
-export const CHAPTERS_PROMPT = 'Сделай для YouTube: 1) главы с таймкодами (первая 00:00, каждая не короче 10 секунд) по тому, что говорится в ролике; 2) описание на 3–4 предложения; 3) 10 хэштегов; 4) три варианта цепляющего названия. Если в проекте нет расшифровки речи — сначала распознай речь. Ничего в ролике не меняй.';
 
 function AiPanel() {
   const settings = useStore(s => s.settings);
@@ -629,8 +629,8 @@ function AiPanel() {
           <div className="row"><Director size={16} color="var(--accent)" /><b>ИИ-режиссёр</b></div>
           <div className="small-text muted">Помощник смотрит ролик и советует, что улучшить, или пишет главы, описание и хэштеги.</div>
           <div className="quick">
-            <button className="chip" onClick={() => askAssistant(DIRECTOR_PROMPT, true)}><Director size={12} /> Разбор ролика</button>
-            <button className="chip" onClick={() => askAssistant(CHAPTERS_PROMPT)}><BookOpenText size={12} /> Главы, описание, хэштеги</button>
+            <button className="chip" onClick={() => askAssistant(S.DIRECTOR_PROMPT, true)}><Director size={12} /> Разбор ролика</button>
+            <button className="chip" onClick={() => askAssistant(S.CHAPTERS_PROMPT)}><BookOpenText size={12} /> Главы, описание, хэштеги</button>
           </div>
         </div>
         <div className="card">
