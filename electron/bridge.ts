@@ -24,7 +24,8 @@ export function callEditor(name: string, args: unknown, source: string): Promise
   if (!win || win.isDestroyed()) return Promise.resolve({ text: 'Окно редактора закрыто', isError: true });
   const id = ++seq;
   return new Promise(resolve => {
-    const long = ['export_video', 'transcribe', 'remove_silence', 'detect_scenes', 'import_media', 'get_frame'].includes(name) || name.startsWith('generate_');
+    const long = ['export_video', 'transcribe', 'remove_silence', 'detect_scenes', 'import_media', 'get_frame', 'stabilize_clip', 'reverse_clip', 'auto_reframe',
+      'remove_fillers', 'make_subtitles', 'translate_subtitles', 'analyze_audio', 'add_sticker'].includes(name) || name.startsWith('generate_');
     const timer = setTimeout(() => {
       if (pending.delete(id)) resolve({ text: 'Редактор не ответил вовремя', isError: true });
     }, long ? 30 * 60_000 : 60_000);

@@ -33,8 +33,19 @@ export function hexToRgba(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-/** Рисует текст на холсте размером W×H (весь кадр). Возвращает рамку текста для выделения в просмотре. */
-export function drawText(ctx: CanvasRenderingContext2D, c: TextClip, W: number, H: number): { x: number; y: number; w: number; h: number } {
+// Какое слово звучит в момент local (от начала клипа); -1 — пока ни одно
+export function activeWord(c: TextClip, local: number): number {
+  if (!c.words?.length || !c.highlight) return -1;
+  let idx = -1;
+  for (let i = 0; i < c.words.length; i++) if (local >= c.words[i].s - 0.02) idx = i;
+  return idx;
+}
+
+/**
+ * Рисует текст на холсте размером W×H (весь кадр). Возвращает рамку текста для выделения в просмотре.
+ * active — номер произносимого слова для субтитров «слово за словом» (оно рисуется цветом подсветки).
+ */
+export function drawText(ctx: CanvasRenderingContext2D, c: TextClip, W: number, H: number, active = -1): { x: number; y: number; w: number; h: number } {
   const s = c.style;
   const k = H / 1080;
   const size = (s.size / 1000) * H;
@@ -56,8 +67,12 @@ export function drawText(ctx: CanvasRenderingContext2D, c: TextClip, W: number, 
     roundRect(ctx, cx - bw / 2 - pad, cy - bh / 2 - pad * 0.7, bw + pad * 2, bh + pad * 1.4, size * 0.22);
     ctx.fill();
   }
+  let wordNo = 0;
   lines.forEach((line, i) => {
     const y = cy - bh / 2 + lh * (i + 0.5);
+    const lineWords = line.split(/\s+/).filter(Boolean);
+    const first = wordNo;
+    wordNo += lineWords.length;
     if (s.shadow) {
       ctx.shadowColor = 'rgba(0,0,0,0.55)';
       ctx.shadowBlur = size * 0.18;
@@ -73,6 +88,20 @@ export function drawText(ctx: CanvasRenderingContext2D, c: TextClip, W: number, 
     ctx.fillStyle = s.color;
     ctx.fillText(line, left, y);
     ctx.shadowColor = 'transparent';
+    // подсветка произносимого слова поверх строки
+    if (active >= first && active < wordNo && c.highlight) {
+      const k2 = active - first;
+      const lw = widths[i];
+      const lineLeft = s.align === 'left' ? left : s.align === 'right' ? left - lw : left - lw / 2;
+      const before = lineWords.slice(0, k2).join(' ');
+      const x = lineLeft + (before ? ctx.measureText(before + ' ').width : 0);
+      ctx.save();
+      ctx.textAlign = 'left';
+      if (s.strokeWidth > 0) { ctx.lineJoin = 'round'; ctx.lineWidth = s.strokeWidth * 2 * k; ctx.strokeStyle = s.strokeColor; ctx.strokeText(lineWords[k2], x, y); }
+      ctx.fillStyle = c.highlight;
+      ctx.fillText(lineWords[k2], x, y);
+      ctx.restore();
+    }
   });
   ctx.restore();
   const extra = s.background ? pad : 0;
@@ -80,10 +109,24 @@ export function drawText(ctx: CanvasRenderingContext2D, c: TextClip, W: number, 
 }
 
 /** PNG всего кадра с текстом — для экспорта */
-export function renderTextPng(c: TextClip, W: number, H: number): string {
+export function renderTextPng(c: TextClip, W: number, H: number, active = -1): string {
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
-  drawText(canvas.getContext('2d')!, c, W, H);
+  drawText(canvas.getContext('2d')!, c, W, H, active);
   return canvas.toDataURL('image/png');
+}
+
+/** Картинки для экспорта: для «слово за словом» — по одной на каждое слово, с временем показа */
+export function renderTextPngs(c: TextClip, W: number, H: number): { dataUrl: string; from?: number; to?: number }[] {
+  if (!c.words?.length || !c.highlight) return [{ dataUrl: renderTextPng(c, W, H) }];
+  const out: { dataUrl: string; from?: number; to?: number }[] = [];
+  const first = Math.max(0, c.words[0].s);
+  if (first > 0.03) out.push({ dataUrl: renderTextPng(c, W, H, -1), from: 0, to: first });
+  c.words.forEach((w, i) => {
+    const from = Math.max(0, i === 0 ? first : w.s);
+    const to = i + 1 < c.words!.length ? Math.max(from, c.words![i + 1].s) : c.duration;
+    if (to - from > 0.005) out.push({ dataUrl: renderTextPng(c, W, H, i), from, to: Math.min(c.duration, to) });
+  });
+  return out;
 }

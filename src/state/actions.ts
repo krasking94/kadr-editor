@@ -5,9 +5,9 @@ import {
   clipDuration, clipEnd, findClip, FORMAT_PRESETS, layoutProject, makeMediaClip, makeTextClip, mainTrack,
   mediaById, MIN_CLIP, newProject, projectDuration, uid, defaultTextStyle,
 } from '../../shared/timeline';
-import { renderTextPng } from '../lib/text-render';
+import { renderTextPngs } from '../lib/text-render';
 import { loadFonts } from '../lib/fonts';
-import { askConfirm, commit, endTask, get, patchMediaCache, set, startTask, toast, updateTask } from './store';
+import { askConfirm, commit, endTask, get, patchMediaCache, set, startTask, toast, updateTask, type QueueItem } from './store';
 
 const deepMerge = <T extends object>(base: T, patch: Partial<T> | undefined): T => ({ ...base, ...(patch || {}) });
 
@@ -428,7 +428,10 @@ export function addText(text: string, start?: number, duration = 3, style: Parti
 
 export const SUBTITLE_STYLE: Partial<TextStyle> = { size: 52, y: 0.86, bold: true, background: true, backgroundOpacity: 0.55, shadow: false, maxWidth: 0.8 };
 
-export function addSubtitles(items: { start: number; end: number; text: string }[], replace = false, style: Partial<TextStyle> = {}, source?: string) {
+// Стиль «как у блогеров»: крупно, по центру нижней трети, жирная обводка, слово подсвечивается
+export const BLOGGER_STYLE: Partial<TextStyle> = { font: 'Montserrat', size: 78, y: 0.72, bold: true, uppercase: true, strokeWidth: 7, strokeColor: '#000000', shadow: true, background: false, maxWidth: 0.86 };
+
+export function addSubtitles(items: { start: number; end: number; text: string; words?: TextClip['words'] }[], replace = false, style: Partial<TextStyle> = {}, source?: string, highlight?: string) {
   const clean = items.filter(i => i.text.trim() && i.end > i.start);
   commit(`Субтитры: ${clean.length} строк`, p => {
     let t = p.tracks.find(x => x.kind === 'text' && x.name.startsWith('Субтитры'));
@@ -437,6 +440,7 @@ export function addSubtitles(items: { start: number; end: number; text: string }
     for (const i of clean) {
       const c = makeTextClip(i.text.trim(), i.start, Math.max(0.3, i.end - i.start), { ...SUBTITLE_STYLE, ...style });
       c.subtitle = true; c.animIn = 'none'; c.animOut = 'none';
+      if (i.words?.length && highlight) { c.words = i.words; c.highlight = highlight; }
       t.clips.push(c);
     }
     t.clips.sort((a, b) => a.start - b.start);
@@ -647,10 +651,10 @@ export async function detectScenes(clipId: string, split = true, sensitivity = 0
 async function textRenders(p: Project, scale = 1) {
   await loadFonts();
   const W = Math.round(p.width * scale), H = Math.round(p.height * scale);
-  const out: { clipId: string; dataUrl: string }[] = [];
+  const out: { clipId: string; dataUrl: string; from?: number; to?: number }[] = [];
   for (const t of p.tracks) {
     if (t.hidden || t.kind !== 'text') continue;
-    for (const c of t.clips) if (c.type === 'text') out.push({ clipId: c.id, dataUrl: renderTextPng(c, W, H) });
+    for (const c of t.clips) if (c.type === 'text') for (const r of renderTextPngs(c, W, H)) out.push({ clipId: c.id, ...r });
   }
   return out;
 }
@@ -670,9 +674,11 @@ export async function renderFrame(time: number, width = 960): Promise<string> {
   return api.renderFrame(small, await textRenders(small), time, width);
 }
 
-export async function exportVideo(opts: ExportOptions, source?: string): Promise<{ ok: boolean; outPath?: string; error?: string; canceled?: boolean; seconds?: number }> {
+type ExportResult = { ok: boolean; outPath?: string; error?: string; canceled?: boolean; seconds?: number };
+
+export async function exportVideo(opts: ExportOptions, source?: string, snap?: { project: Project; texts: Awaited<ReturnType<typeof textRenders>> }): Promise<ExportResult> {
   const s = get();
-  const p = projectForRender(s.project!);
+  const p = snap?.project ?? projectForRender(s.project!);
   if (projectDuration(p) <= 0) {
     toast('info', 'Таймлайн пуст: добавьте видео, фото или текст');
     return { ok: false, error: 'Пустой таймлайн' };
@@ -685,7 +691,7 @@ export async function exportVideo(opts: ExportOptions, source?: string): Promise
     api.taskbarProgress(ev.progress);
   });
   try {
-    const res = await api.exportStart(jobId, p, await textRenders(p), opts);
+    const res: ExportResult = await api.exportStart(jobId, p, snap?.texts ?? await textRenders(p), opts);
     if (res.ok) toast('success', 'Видео готово!', {
       detail: res.outPath, ttl: 12000,
       action: { label: 'Показать в папке', run: () => api.showItem(res.outPath!) },
@@ -701,7 +707,81 @@ export async function exportVideo(opts: ExportOptions, source?: string): Promise
   }
 }
 
-export async function transcribeProject(o: { clipId?: string; addSubs?: boolean; language?: string; source?: string } = {}) {
+// ── Обновление программы ──
+export async function installUpdateNow() {
+  if (get().exportQueue.some(q => q.state === 'run' || q.state === 'wait') || get().tasks.some(t => t.label.startsWith('Сохраняю видео'))) {
+    toast('info', 'Сначала дождитесь, пока сохранится видео', { detail: 'Обновление установится само, когда вы закроете программу.' });
+    return;
+  }
+  if (await confirmDiscard()) api.updateInstall();
+}
+
+let updateShown = '';
+export function watchUpdates(): () => void {
+  return api.onUpdateState((u: { status: string; version?: string }) => {
+    const key = u.status + u.version;
+    if (updateShown === key) return;
+    if (u.status === 'available') {
+      updateShown = key;
+      toast('info', `Вышла новая версия «Кадра» — ${u.version}`, { ttl: 20000, detail: 'Скачается в фоне, работе не мешает.', action: { label: 'Скачать', run: () => api.updateDownload() } });
+    } else if (u.status === 'ready') {
+      updateShown = key;
+      toast('success', `Обновление ${u.version} готово`, { ttl: 30000, detail: 'Установится при перезапуске или когда вы закроете программу.', action: { label: 'Перезапустить', run: () => installUpdateNow() } });
+    }
+  });
+}
+
+// ── Очередь сохранения: ролик запоминается таким, какой он сейчас, и сохраняется по очереди ──
+const queued = new Map<string, { opts: ExportOptions; project: Project; texts: Awaited<ReturnType<typeof textRenders>> }>();
+let pumping = false;
+
+export async function queueExport(opts: ExportOptions): Promise<void> {
+  const p = projectForRender(get().project!);
+  if (projectDuration(p) <= 0) { toast('info', 'Таймлайн пуст: добавьте видео, фото или текст'); return; }
+  const id = 'q' + Date.now() + Math.random().toString(36).slice(2, 5);
+  queued.set(id, { opts, project: p, texts: await textRenders(p) });
+  const name = opts.outPath.split(/[\\/]/).pop() || opts.outPath;
+  set(s => ({ exportQueue: [...s.exportQueue, { id, name, outPath: opts.outPath, state: 'wait' }] }));
+  toast('success', 'Добавлено в очередь сохранения', { detail: name });
+  pumpQueue();
+}
+
+function patchQueue(id: string, patch: Partial<QueueItem>) {
+  set(s => ({ exportQueue: s.exportQueue.map(q => (q.id === id ? { ...q, ...patch } : q)) }));
+}
+
+export function removeFromQueue(id: string) {
+  queued.delete(id);
+  set(s => ({ exportQueue: s.exportQueue.filter(q => q.id !== id || q.state === 'run') }));
+}
+
+export function clearFinishedQueue() {
+  set(s => ({ exportQueue: s.exportQueue.filter(q => q.state === 'wait' || q.state === 'run') }));
+}
+
+async function pumpQueue() {
+  if (pumping) return;
+  pumping = true;
+  try {
+    for (;;) {
+      const next = get().exportQueue.find(q => q.state === 'wait' && queued.has(q.id));
+      if (!next) break;
+      const job = queued.get(next.id)!;
+      queued.delete(next.id);
+      patchQueue(next.id, { state: 'run' });
+      const res = await exportVideo(job.opts, undefined, job);
+      patchQueue(next.id, { state: res.ok ? 'done' : res.canceled ? 'canceled' : 'error', error: res.error });
+    }
+    const q = get().exportQueue;
+    if (q.length > 1 && q.every(i => i.state !== 'wait' && i.state !== 'run')) toast('success', 'Очередь сохранения закончена', { detail: `Готово: ${q.filter(i => i.state === 'done').length} из ${q.length}` });
+  } finally {
+    pumping = false;
+  }
+}
+
+export type Segment = { start: number; end: number; text: string; words?: { s: number; e: number; w: string }[] };
+
+export async function transcribeProject(o: { clipId?: string; addSubs?: boolean; language?: string; source?: string; fillers?: boolean; label?: string } = {}): Promise<Segment[]> {
   const s = get();
   const p = projectForRender(s.project!);
   let range: { start: number; end: number } | undefined;
@@ -709,9 +789,9 @@ export async function transcribeProject(o: { clipId?: string; addSubs?: boolean;
     const f = findClip(p, o.clipId);
     if (f) range = { start: f.clip.start, end: clipEnd(f.clip) };
   }
-  const task = startTask('Распознаю речь');
+  const task = startTask(o.label || 'Распознаю речь');
   try {
-    const segs: { start: number; end: number; text: string }[] = await api.transcribe(p, range, o.language);
+    const segs: Segment[] = await api.transcribe(p, range, o.language, !!o.fillers);
     if (o.addSubs !== false && segs.length) addSubtitles(segs, !o.clipId, {}, o.source);
     if (!segs.length) toast('info', 'Речь не найдена');
     return segs;

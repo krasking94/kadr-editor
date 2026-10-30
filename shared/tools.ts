@@ -114,12 +114,20 @@ export const TOOLS: ToolDef[] = [
         brightness: num('-1..1, 0 = unchanged'), contrast: num('0..2, 1 = unchanged'),
         saturation: num('0..3, 1 = unchanged'), gamma: num('0.1..3, 1 = unchanged'),
         temperature: num('-1 cold .. 1 warm'),
+        lut: str('Absolute path to a .cube LUT file (film look); empty string removes it'),
       }),
       effects: obj({
         blur: num('0..1'), vignette: num('0..1'), sharpen: num('0..1'), grain: num('0..1'),
         flipH: bool('Mirror horizontally'), flipV: bool('Flip vertically'),
       }),
       duck: bool('For music on the audio track: lower it automatically under speech'),
+      voice: bool('Studio voice: clean EQ and compression for speech'),
+      denoise: num('Noise reduction 0..1 (0 = off, 0.5 = typical)'),
+      key: { anyOf: [obj({
+        color: str('Background color to remove, #rrggbb (green #00ff00, blue #0000ff)'),
+        similarity: num('0..1, how close a color must be to be removed, default 0.3'),
+        blend: num('0..1, edge softness, default 0.1'),
+      }), { type: 'null' }], description: 'Chroma key (green screen). null removes it. Put the keyed clip on an overlay track above a background.' },
     }, ['clip_id']),
   },
   {
@@ -170,6 +178,66 @@ export const TOOLS: ToolDef[] = [
     name: 'detect_scenes', title: 'Ищу смену сцен',
     description: 'Find scene cuts in a main-track clip; with split=true cut the clip at each scene change.',
     inputSchema: obj({ clip_id: str('Main-track clip id'), split: bool('Split at the cuts'), sensitivity: num('0..1, default 0.4') }, ['clip_id']),
+  },
+  {
+    name: 'stabilize_clip', title: 'Убираю тряску',
+    description: 'Stabilize a shaky media clip (two-pass vid.stab). Creates a processed copy and switches the clip to it; the original can be restored by the user. Takes about real-time.',
+    inputSchema: obj({ clip_id: str('Media clip id') }, ['clip_id']),
+  },
+  {
+    name: 'reverse_clip', title: 'Разворачиваю клип',
+    description: 'Make a media clip play backwards (video and audio). Creates a processed copy and switches the clip to it.',
+    inputSchema: obj({ clip_id: str('Media clip id') }, ['clip_id']),
+  },
+  {
+    name: 'auto_reframe', title: 'Делаю вертикальное видео',
+    description: 'Switch the project to vertical 9:16 (or the given size) and make every main-track video follow the speaker face with a smooth virtual camera (offline face detection). Use for Reels, Shorts, TikTok.',
+    inputSchema: obj({ width: num('Default 1080'), height: num('Default 1920') }),
+  },
+  {
+    name: 'remove_fillers', title: 'Убираю слова-паразиты',
+    description: 'Transcribe the speech with word timestamps and cut filler words ("эээ", "ммм", "ну", "как бы", "короче", "типа", "um", "uh"...) out of the main track. Needs a speech-recognition key. Returns how many were removed.',
+    inputSchema: obj({ words: { type: 'array', items: { type: 'string' }, description: 'Optional custom filler list (lowercase); default is a built-in Russian+English list' } }),
+  },
+  {
+    name: 'make_subtitles', title: 'Делаю субтитры',
+    description: 'Recognize speech and create subtitles. style "blogger" = big bold uppercase 1–3 words per screen with the spoken word highlighted (karaoke, like Reels/Shorts); "classic" = normal lines at the bottom. Replaces existing subtitles.',
+    inputSchema: obj({
+      style: str('Subtitle style', ['classic', 'blogger']),
+      words: num('Words per screen for blogger style, default 3'),
+      highlight: str('Highlight color for the current word, #rrggbb (blogger style)'),
+      language: str('Speech language code, e.g. ru, en (optional)'),
+    }),
+  },
+  {
+    name: 'translate_subtitles', title: 'Перевожу субтитры',
+    description: 'Translate all existing subtitle clips to another language with the configured AI, keeping the timing.',
+    inputSchema: obj({ language: str('Target language name in English, e.g. English, Spanish, German, Russian') }, ['language']),
+  },
+  {
+    name: 'export_subtitles', title: 'Сохраняю субтитры',
+    description: 'Save subtitles as an .srt file (for YouTube upload). Returns the file path.',
+    inputSchema: obj({ path: str('Absolute .srt path; default next to the videos folder') }),
+  },
+  {
+    name: 'add_sticker', title: 'Добавляю стикер',
+    description: 'Put an emoji sticker or a drawn shape (arrow, circle to highlight something, frame, underline, marker, star, check, cross, speech bubble) over the video at the playhead. Use update_clip/update_text afterwards to move or resize it.',
+    inputSchema: obj({
+      emoji: str('An emoji character, e.g. 🔥'),
+      shape: str('Shape kind', ['arrow', 'pointer', 'circle', 'rect', 'underline', 'marker', 'star', 'check', 'cross', 'bubble']),
+      color: str('Shape color #rrggbb, default #ff3b5c'),
+      time: num('Timeline time, default playhead'),
+    }),
+  },
+  {
+    name: 'studio_voice', title: 'Делаю студийный звук',
+    description: 'Turn studio voice processing (noise reduction + speech EQ and compression) on or off for every clip with audio.',
+    inputSchema: obj({ on: bool('Default true') }),
+  },
+  {
+    name: 'analyze_audio', title: 'Измеряю громкость',
+    description: 'Measure integrated loudness (LUFS), true peak and loudness range of the whole mix. YouTube/VK/Telegram target is about -14 LUFS; export normalizes to the target from settings automatically.',
+    inputSchema: obj({}),
   },
   {
     name: 'set_project', title: 'Меняю формат проекта',
@@ -274,4 +342,7 @@ Rules:
 - The main track is magnetic: clips play back-to-back. Overlay/text/audio tracks use absolute start times.
 - Every change is visible to the user and can be undone, so act confidently, then say in one or two sentences what you did.
 - Use get_frame to check how the result looks when visual quality matters.
-- Never invent file paths; ask the user or use media already in the library.`;
+- Never invent file paths; ask the user or use media already in the library.
+- For Reels/Shorts/TikTok prefer auto_reframe (keeps the face in frame) and make_subtitles with style "blogger".
+- For bad sound use studio_voice; for "эээ" and filler words use remove_fillers; for shaky video use stabilize_clip.
+- When asked for chapters, a description or hashtags, base them on the transcript (transcribe) and answer in text; add markers only if the user asks.`;

@@ -1,11 +1,11 @@
 // Окно «Сохранить видео»: формат, качество, размер, место. Во время сохранения — прогресс и время.
 import { useEffect, useMemo, useState } from 'react';
-import { CircleCheck, Download, Film, FolderOpen, Gauge, Image as ImageIcon, Music, Play, Smartphone, TriangleAlert, Tv } from 'lucide-react';
+import { CircleCheck, Download, ListPlus, Volume2, Film, FolderOpen, Gauge, Image as ImageIcon, Music, Play, Smartphone, TriangleAlert, Tv } from 'lucide-react';
 import { api } from '../api';
 import type { ExportOptions } from '../../shared/types';
 import { clipEnd, findClip, formatTime, projectDuration } from '../../shared/timeline';
 import { get, set, useStore } from '../state/store';
-import { exportVideo } from '../state/actions';
+import { exportVideo, queueExport } from '../state/actions';
 import { Modal, Segmented } from './ui';
 
 type Format = ExportOptions['format'];
@@ -46,6 +46,9 @@ export function ExportDialog() {
   const [speed, setSpeed] = useState('');
   const [result, setResult] = useState<{ outPath?: string; error?: string; seconds?: number }>({});
   const [startedAt, setStartedAt] = useState(0);
+  const [loudness, setLoudness] = useState(settings.loudness ?? -14);
+  const queue = useStore(s => s.exportQueue);
+  const busyQueue = queue.filter(q => q.state === 'wait' || q.state === 'run').length;
   const duration = projectDuration(project);
 
   const aspect = project.width / project.height;
@@ -90,14 +93,21 @@ export function ExportDialog() {
     if (p) setPath(p);
   };
 
+  const options = (): ExportOptions => ({
+    outPath: path, format, width: W, height: H, fps, quality, encoder,
+    rangeStart: r.start > 0 ? r.start : undefined, rangeEnd: r.end < duration ? r.end : undefined,
+    loudness: format === 'gif' || !loudness ? undefined : loudness,
+  });
+  const toQueue = async () => {
+    await queueExport(options());
+    // следующий файл в очереди получит другое имя, чтобы не перезаписать этот
+    setPath(p => p.replace(/(?: \((\d+)\))?(\.[a-z0-9]+)$/i, (_m, n, e) => ` (${(Number(n) || 1) + 1})${e}`));
+  };
   const start = async () => {
     setState('running');
     setProgress(0);
     setStartedAt(Date.now());
-    const res = await exportVideo({
-      outPath: path, format, width: W, height: H, fps, quality, encoder,
-      rangeStart: r.start > 0 ? r.start : undefined, rangeEnd: r.end < duration ? r.end : undefined,
-    });
+    const res = await exportVideo(options());
     setResult(res);
     setState(res.ok ? 'done' : res.canceled ? 'setup' : 'error');
   };
@@ -143,6 +153,9 @@ export function ExportDialog() {
           {formatTime(len)} · примерно {sizeMb < 1 ? '< 1' : Math.round(sizeMb)} МБ
         </span>
         <button className="btn" onClick={close}>Отмена</button>
+        <button className="btn" disabled={!path || len <= 0} onClick={toQueue} data-tip={'Запомнить ролик таким, какой он сейчас, и сохранить, когда закончатся остальные.\nМожно поставить несколько вариантов подряд: для YouTube, Reels и Telegram.'} data-tip-pos="top">
+          <ListPlus size={15} /> В очередь{busyQueue ? ` (${busyQueue})` : ''}
+        </button>
         <button className="btn primary" disabled={!path || len <= 0} onClick={start}><Download size={15} /> Сохранить</button>
       </>}>
       <div>
@@ -196,6 +209,18 @@ export function ExportDialog() {
             ...(mkRange ? [{ value: 'markers' as const, label: 'Между метками', tip: `${formatTime(mkRange.start)}–${formatTime(mkRange.end)}` }] : []),
           ]} />
         </div>
+        {format !== 'gif' && (
+          <div className="field" style={{ minWidth: 220 }}>
+            <label><Volume2 size={12} style={{ verticalAlign: -1 }} /> Громкость</label>
+            <select className="input" value={loudness} onChange={e => setLoudness(Number(e.target.value))}>
+              <option value={-14}>Для YouTube, ВК, Telegram (−14 LUFS)</option>
+              <option value={-16}>Для подкастов и Apple (−16 LUFS)</option>
+              <option value={-11}>Громко, для TikTok и Reels (−11 LUFS)</option>
+              <option value={-23}>Для телевидения (−23 LUFS)</option>
+              <option value={0}>Не менять</option>
+            </select>
+          </div>
+        )}
         {(format === 'mp4' || format === 'mov') && (
           <div className="field" style={{ minWidth: 220 }}>
             <label>Чем считать</label>

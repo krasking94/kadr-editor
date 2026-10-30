@@ -45,6 +45,7 @@ export interface ConfirmRequest {
   resolve: (value: string) => void;
 }
 
+export interface QueueItem { id: string; name: string; outPath: string; state: 'wait' | 'run' | 'done' | 'error' | 'canceled'; error?: string }
 export type Dialog = 'export' | 'settings' | 'palette' | 'shortcuts' | 'about' | null;
 
 interface State {
@@ -77,6 +78,7 @@ interface State {
   safeZones: boolean;
   previewScale: number;
   inspectorTab: string;
+  exportQueue: QueueItem[];
 }
 
 export const useStore = create<State>(() => ({
@@ -109,6 +111,7 @@ export const useStore = create<State>(() => ({
   safeZones: false,
   previewScale: 1,
   inspectorTab: 'main',
+  exportQueue: [],
 }));
 
 export const get = useStore.getState;

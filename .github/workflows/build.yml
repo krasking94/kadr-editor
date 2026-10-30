@@ -57,6 +57,7 @@ jobs:
           path: |
             release/*.exe
             release/*.zip
+            release/latest.yml
           if-no-files-found: error
 
       - name: Прикрепить к релизу
@@ -66,4 +67,6 @@ jobs:
           files: |
             release/*.exe
             release/*.zip
+            release/*.blockmap
+            release/latest.yml
           generate_release_notes: true

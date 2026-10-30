@@ -3,6 +3,7 @@
 import { api } from '../api';
 import { clipEnd, mainTrack, projectDuration } from '../../shared/timeline';
 import * as A from '../state/actions';
+import * as S from '../state/smart';
 import { get, redo, set, toast, undo } from '../state/store';
 import { askAssistant } from '../state/assistant';
 import { saveSettings } from '../state/settings-actions';
@@ -121,7 +122,14 @@ export const COMMANDS: Command[] = [
     if (!id) { toast('info', 'На основной дорожке нет видео'); return; }
     A.detectScenes(id).catch(e => toast('error', String(e.message || e)));
   } },
-  { id: 'ai-review', label: 'Спросить ИИ, что улучшить', group: 'ИИ', needsProject: true, run: () => askAssistant('Посмотри мой ролик и предложи, что можно улучшить. Ничего не меняй, пока я не соглашусь.', true) },
+  { id: 'subs-blogger', label: 'Субтитры как у блогеров', group: 'ИИ', needsProject: true, run: () => S.makeSubtitles({ style: 'blogger' }).catch(() => undefined) },
+  { id: 'fillers', label: 'Убрать «эээ» и слова-паразиты', group: 'ИИ', needsProject: true, run: () => S.removeFillers().catch(() => undefined) },
+  { id: 'reframe', label: 'Вертикальное видео с лицом в центре', group: 'ИИ', needsProject: true, run: () => S.autoReframe().catch(() => undefined) },
+  { id: 'studio-voice', label: 'Студийный звук для всего ролика', group: 'ИИ', needsProject: true, run: () => { S.studioVoiceAll(true); } },
+  { id: 'ai-review', label: 'ИИ-режиссёр: что улучшить', group: 'ИИ', needsProject: true, run: () => askAssistant(S.DIRECTOR_PROMPT, true) },
+  { id: 'ai-chapters', label: 'Главы, описание и хэштеги', group: 'ИИ', needsProject: true, run: () => askAssistant(S.CHAPTERS_PROMPT) },
+  { id: 'srt-open', label: 'Открыть субтитры (SRT)', group: 'Файл', needsProject: true, run: () => { S.importSubtitles(); } },
+  { id: 'srt-save', label: 'Сохранить субтитры (SRT)', group: 'Файл', needsProject: true, run: () => { S.exportSubtitles(); } },
 
   // Окно и помощь
   { id: 'palette', label: 'Все команды', group: 'Окно', keys: ['Ctrl+K', 'Ctrl+Shift+P'], run: () => set(s => ({ dialog: s.dialog === 'palette' ? null : 'palette' })) },

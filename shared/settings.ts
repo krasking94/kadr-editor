@@ -31,6 +31,8 @@ export interface Settings {
   recent: RecentProject[];
   showTips: boolean;
   snapping: boolean;
+  autoUpdate: boolean; // сама проверять новые версии
+  loudness: number; // громкость при сохранении, LUFS; 0 — не выравнивать
   ai: {
     provider: string;
     providers: Record<string, ProviderSettings>;
@@ -63,6 +65,8 @@ export const defaultSettings = (): Settings => ({
   recent: [],
   showTips: true,
   snapping: true,
+  autoUpdate: true,
+  loudness: -14,
   ai: { provider: 'anthropic', providers: {}, speechProvider: 'openai', speechModel: 'whisper-1', speechLanguage: 'ru' },
   gen: { imageProvider: 'openai', imageModels: {}, imageBaseUrl: '', imageAspect: 'auto', voiceId: '', voiceName: '', ttsModel: 'eleven_v4' },
   mcp: { serverEnabled: true, port: 7788, clients: [] },

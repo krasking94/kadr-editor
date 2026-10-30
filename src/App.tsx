@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FilePlus2 } from 'lucide-react';
 import { api } from './api';
 import { get, set, toast, useStore } from './state/store';
-import { confirmDiscard, importFiles, openNewProject, openProjectFile } from './state/actions';
+import { confirmDiscard, importFiles, openNewProject, openProjectFile, watchUpdates } from './state/actions';
 import { listenToolCalls } from './state/tool-exec';
 import { initAssistant } from './state/assistant';
 import { loadSettings, watchSystemTheme } from './state/settings-actions';
@@ -29,7 +29,7 @@ export function App() {
   // Запуск: настройки, шрифты, связь с ИИ
   useEffect(() => {
     loadFonts();
-    const offs = [listenToolCalls(), initAssistant(), watchSystemTheme()];
+    const offs = [listenToolCalls(), initAssistant(), watchSystemTheme(), watchUpdates()];
     (async () => {
       await loadSettings();
       const info = await api.info();

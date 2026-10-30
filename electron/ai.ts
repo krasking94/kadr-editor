@@ -223,8 +223,38 @@ export async function listModels(providerId: string, baseUrl?: string): Promise<
   return (data.data || data.models || []).map((m: any) => m.id || m.name).filter(Boolean).sort();
 }
 
+// Простой запрос к выбранной нейросети без инструментов: перевод субтитров, описание ролика, главы
+export async function complete(system: string, user: string): Promise<string> {
+  const cfg = providerConfig();
+  if (cfg.preset.needsKey && !cfg.key) throw new Error(`Нужен ключ для «${cfg.preset.label}». Откройте Настройки → ИИ.`);
+  if (!cfg.model) throw new Error('Не указана модель. Откройте Настройки → ИИ.');
+  try {
+    if (cfg.preset.kind === 'anthropic') {
+      const client = new Anthropic({ apiKey: cfg.key, baseURL: cfg.baseUrl });
+      const res = await client.messages.create({ model: cfg.model, max_tokens: 16000, system, messages: [{ role: 'user', content: user }] });
+      return res.content.map(b => (b.type === 'text' ? b.text : '')).join('').trim();
+    }
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (cfg.key) headers.authorization = 'Bearer ' + cfg.key;
+    const r = await fetch(cfg.baseUrl + '/chat/completions', {
+      method: 'POST', headers,
+      body: JSON.stringify({ model: cfg.model, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+    });
+    const body = await r.text();
+    if (!r.ok) throw new Error(`Ошибка сервиса (${r.status}): ${body.slice(0, 300)}`);
+    return String(JSON.parse(body).choices?.[0]?.message?.content || '').trim();
+  } catch (e) {
+    throw new Error(humanError(e));
+  }
+}
+
+export interface Segment { start: number; end: number; text: string; words?: { s: number; e: number; w: string }[] }
+
+// Подсказка для Whisper: с ней он не выбрасывает «эээ» и «ммм» из расшифровки
+const FILLER_PROMPT = 'Эээ, ну, ммм… короче, как бы, это самое. Хм, ну вот.';
+
 // Распознавание речи через OpenAI-совместимый сервис (OpenAI Whisper, Groq и др.)
-export async function transcribeFile(path: string, language?: string): Promise<{ start: number; end: number; text: string }[]> {
+export async function transcribeFile(path: string, language?: string, fillers = false): Promise<Segment[]> {
   const s = getSettings();
   const preset = providerPreset(s.ai.speechProvider);
   const saved = s.ai.providers[preset.id] || {};
@@ -236,11 +266,21 @@ export async function transcribeFile(path: string, language?: string): Promise<{
   form.append('model', s.ai.speechModel || preset.speechModel || 'whisper-1');
   form.append('response_format', 'verbose_json');
   form.append('timestamp_granularities[]', 'segment');
+  form.append('timestamp_granularities[]', 'word');
+  if (fillers) form.append('prompt', FILLER_PROMPT);
   if (language || s.ai.speechLanguage) form.append('language', language || s.ai.speechLanguage);
   const r = await fetch(url, { method: 'POST', headers: key ? { authorization: 'Bearer ' + key } : {}, body: form });
   if (!r.ok) throw new Error(`Распознавание не удалось (${r.status}): ${(await r.text()).slice(0, 300)}`);
   const data = await r.json();
-  if (Array.isArray(data.segments)) return data.segments.map((x: any) => ({ start: Number(x.start), end: Number(x.end), text: String(x.text).trim() })).filter((x: any) => x.text);
+  // Слова со временем: OpenAI и Groq отдают их общим списком, раскладываем по фразам
+  const words: { s: number; e: number; w: string }[] = Array.isArray(data.words)
+    ? data.words.map((w: any) => ({ s: Number(w.start), e: Number(w.end), w: String(w.word ?? w.text ?? '').trim() })).filter((w: any) => w.w && isFinite(w.s))
+    : [];
+  if (Array.isArray(data.segments)) {
+    const segs: Segment[] = data.segments.map((x: any) => ({ start: Number(x.start), end: Number(x.end), text: String(x.text).trim() })).filter((x: Segment) => x.text);
+    if (words.length) for (const seg of segs) seg.words = words.filter(w => w.s >= seg.start - 0.05 && w.s < seg.end - 0.01);
+    return segs;
+  }
   if (data.text) return [{ start: 0, end: Number(data.duration || 5), text: String(data.text).trim() }];
   return [];
 }

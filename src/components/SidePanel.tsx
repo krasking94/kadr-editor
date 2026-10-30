@@ -3,7 +3,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Blend, Camera, Captions, Clapperboard, Film, FolderOpen, Image as ImageIcon, Layers, Mic, Music, Plus, Scissors,
   Sparkles, Square, Trash2, Type, Upload, Video, Wand2, WandSparkles, AudioLines, TriangleAlert, ImagePlus, Loader2, Speech, Volume2, Play,
+  Smile, Monitor, Languages, FileDown, FileUp, Eraser, Smartphone, Mic2, Gauge, BookOpenText, Clapperboard as Director,
 } from 'lucide-react';
+import * as S from '../state/smart';
+import { EMOJI, SHAPES, SHAPE_COLORS, renderShape } from '../lib/stickers';
 import { imageProvider, type Voice } from '../../shared/generators';
 import { generate, cleanError, projectAspect, type GenKind } from '../state/generate';
 import { api, mediaUrl } from '../api';
@@ -18,11 +21,12 @@ import { transitionFx } from '../lib/transition-fx';
 import { DND_MEDIA, DND_TEXT } from '../lib/dnd';
 import { openMenu, Segmented, Slider, Switch } from './ui';
 
-export type RailTab = 'media' | 'text' | 'transitions' | 'filters' | 'record' | 'create' | 'ai';
+export type RailTab = 'media' | 'text' | 'stickers' | 'transitions' | 'filters' | 'record' | 'create' | 'ai';
 
 const RAIL: { id: RailTab; label: string; icon: typeof Film; tip: string }[] = [
   { id: 'media', label: 'Медиа', icon: Film, tip: 'Ваши видео, фото и музыка' },
   { id: 'text', label: 'Текст', icon: Type, tip: 'Заголовки, подписи, субтитры' },
+  { id: 'stickers', label: 'Стикеры', icon: Smile, tip: 'Эмодзи, стрелки, рамки и другие фигуры поверх видео' },
   { id: 'transitions', label: 'Переходы', icon: Blend, tip: 'Плавные склейки между клипами' },
   { id: 'filters', label: 'Фильтры', icon: Wand2, tip: 'Цвет и эффекты' },
   { id: 'record', label: 'Запись', icon: Mic, tip: 'Голос с микрофона или видео с камеры' },
@@ -47,6 +51,7 @@ export function SidePanel({ tab }: { tab: RailTab }) {
     <div className="side-panel" key={tab}>
       {tab === 'media' && <MediaPanel />}
       {tab === 'text' && <TextPanel />}
+      {tab === 'stickers' && <StickersPanel />}
       {tab === 'transitions' && <TransitionsPanel />}
       {tab === 'filters' && <FiltersPanel />}
       {tab === 'record' && <RecordPanel />}
@@ -172,10 +177,75 @@ function TextPanel() {
           ))}
         </div>
         <div className="section-title">Субтитры</div>
-        <div className="tip-card"><Captions size={18} color="var(--accent)" style={{ flex: 'none' }} />
-          <div>ИИ послушает речь в видео и сам расставит субтитры по времени.
-            <button className="btn small" style={{ marginTop: 8 }} onClick={() => A.transcribeProject({ addSubs: true }).catch(() => undefined)}><Sparkles size={13} /> Сделать субтитры</button>
-          </div>
+        <SubtitlesCard />
+      </div>
+    </>
+  );
+}
+
+const LANGS = ['English', 'Русский', 'Українська', 'Қазақша', 'Deutsch', 'Español', 'Français', 'Italiano', 'Português', 'Türkçe', '中文', '日本語', 'العربية', 'हिन्दी'];
+
+function SubtitlesCard() {
+  const [style, setStyle] = useState<'blogger' | 'classic'>('blogger');
+  const [words, setWords] = useState(3);
+  const [hl, setHl] = useState(S.HIGHLIGHTS[0]);
+  const [lang, setLang] = useState('English');
+  const busy = useStore(s => s.tasks.some(t => /субтитр|Распознаю|паразит|Перевожу/i.test(t.label)));
+  return (
+    <div className="card" style={{ gap: 10 }}>
+      <div className="small-text muted">ИИ послушает речь в видео и сам расставит субтитры по времени.</div>
+      <Segmented value={style} onChange={setStyle} options={[
+        { value: 'blogger', label: 'Как у блогеров', tip: 'Крупно, по 2–4 слова, произносимое слово подсвечивается' },
+        { value: 'classic', label: 'Классика', tip: 'Целые фразы внизу кадра на плашке' },
+      ]} />
+      {style === 'blogger' && <>
+        <Slider label="Слов на экране" value={words} min={1} max={6} step={1} def={3} onChange={setWords} />
+        <div className="row wrap" style={{ gap: 5 }}>
+          <span className="small-text muted">Подсветка:</span>
+          {S.HIGHLIGHTS.map(c => <button key={c} onClick={() => setHl(c)} style={{ width: 20, height: 20, borderRadius: 6, border: hl === c ? '2px solid var(--accent)' : '1px solid var(--line-2)', background: c, cursor: 'pointer' }} />)}
+        </div>
+      </>}
+      <button className="btn primary small" disabled={busy} onClick={() => S.makeSubtitles({ style, words, highlight: hl }).catch(() => undefined)}><Captions size={13} /> Сделать субтитры</button>
+      <div className="row" style={{ gap: 6 }}>
+        <select className="input" value={lang} onChange={e => setLang(e.target.value)} style={{ flex: 1 }}>{LANGS.map(l => <option key={l}>{l}</option>)}</select>
+        <button className="btn small" disabled={busy} onClick={() => S.translateSubtitles(lang).catch(() => undefined)} data-tip="Перевод делает нейросеть из настроек ИИ"><Languages size={13} /> Перевести</button>
+      </div>
+      <div className="row wrap" style={{ gap: 6 }}>
+        <button className="btn small ghost" onClick={() => S.importSubtitles()} data-tip="Открыть готовые субтитры из файла .srt или .vtt"><FileUp size={13} /> Открыть SRT</button>
+        <button className="btn small ghost" onClick={() => S.exportSubtitles()} data-tip="Файл для YouTube, ВК и плееров"><FileDown size={13} /> Сохранить SRT</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Стикеры и фигуры ─────────────────────────────────
+function StickersPanel() {
+  const [color, setColor] = useState(SHAPE_COLORS[0]);
+  const previews = useMemo(() => Object.fromEntries(SHAPES.map(sh => [sh.id, renderShape(sh.id, color).dataUrl])), [color]);
+  return (
+    <>
+      <div className="panel-head"><Smile size={16} /><h3>Стикеры</h3></div>
+      <div className="panel-body">
+        <div className="tip-card" style={{ marginBottom: 12 }}><Smile size={18} color="var(--accent)" style={{ flex: 'none' }} />
+          <div>Нажмите — стикер встанет поверх видео с места линии времени на 3 секунды. Его можно двигать мышью прямо в кадре и растягивать на таймлайне.</div>
+        </div>
+        <div className="section-title" style={{ marginTop: 0 }}>Стрелки и фигуры</div>
+        <div className="row wrap" style={{ gap: 5, marginBottom: 8 }}>
+          {SHAPE_COLORS.map(c => <button key={c} onClick={() => setColor(c)} style={{ width: 22, height: 22, borderRadius: 6, border: color === c ? '2px solid var(--accent)' : '1px solid var(--line-2)', background: c, cursor: 'pointer' }} />)}
+        </div>
+        <div className="tile-grid">
+          {SHAPES.map(sh => (
+            <button key={sh.id} className="tile" onClick={() => S.addShape(sh.id, color).catch(e => toast('error', 'Не получилось', { detail: String(e) }))}>
+              <div className="t-prev" style={{ background: 'repeating-conic-gradient(#2a2f45 0 25%, #222638 0 50%) 0 0 / 14px 14px' }}>
+                <img src={previews[sh.id]} style={{ maxWidth: '80%', maxHeight: '80%' }} draggable={false} />
+              </div>
+              <span className="t-name">{sh.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="section-title">Эмодзи</div>
+        <div className="emoji-grid">
+          {EMOJI.map(e => <button key={e} className="emoji-btn" onClick={() => S.addEmoji(e)}>{e}</button>)}
         </div>
       </div>
     </>
@@ -315,8 +385,14 @@ function FiltersPanel() {
 }
 
 // ── Запись голоса и камеры ───────────────────────────
+type ScreenSource = { id: string; name: string; screen: boolean; thumb: string };
+
 function RecordPanel() {
-  const [mode, setMode] = useState<'mic' | 'cam'>('mic');
+  const [mode, setMode] = useState<'mic' | 'cam' | 'screen'>('mic');
+  const [sources, setSources] = useState<ScreenSource[] | null>(null);
+  const [sysAudio, setSysAudio] = useState(true);
+  const [withMic, setWithMic] = useState(true);
+  const extra = useRef<MediaStream[]>([]);
   const [state, setState] = useState<'idle' | 'ready' | 'rec' | 'saving'>('idle');
   const [level, setLevel] = useState(0);
   const [elapsed, setElapsed] = useState(0);
@@ -333,24 +409,55 @@ function RecordPanel() {
     cancelAnimationFrame(raf.current);
     stream.current?.getTracks().forEach(t => t.stop());
     stream.current = null;
+    extra.current.forEach(s => s.getTracks().forEach(t => t.stop()));
+    extra.current = [];
     ctxRef.current?.close().catch(() => undefined);
     ctxRef.current = null;
     setLevel(0);
   };
   useEffect(() => () => { rec.current?.state === 'recording' && rec.current.stop(); release(); }, []);
 
-  const prepare = async (m = mode) => {
+  // Запись экрана: сначала выбираем, что записывать
+  const [listing, setListing] = useState(false);
+  const listScreens = async () => {
+    release();
+    setError('');
+    setListing(true);
+    try { setSources(await api.screenSources()); setState('idle'); } catch { setError('Не удалось получить список экранов.'); } finally { setListing(false); }
+  };
+
+  const prepare = async (m = mode, screenId?: string) => {
     release();
     setError('');
     try {
-      const s = await navigator.mediaDevices.getUserMedia(m === 'cam' ? { audio: true, video: { width: 1920, height: 1080 } } : { audio: { echoCancellation: true, noiseSuppression: true } });
-      stream.current = s;
-      if (m === 'cam' && videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play().catch(() => undefined); }
+      let s: MediaStream;
       const ctx = new AudioContext();
       ctxRef.current = ctx;
+      if (m === 'screen') {
+        await api.chooseScreen(screenId, sysAudio);
+        const disp = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: sysAudio });
+        extra.current.push(disp);
+        // звук компьютера и микрофон сводим в одну дорожку
+        const dest = ctx.createMediaStreamDestination();
+        if (disp.getAudioTracks().length) ctx.createMediaStreamSource(new MediaStream(disp.getAudioTracks())).connect(dest);
+        if (withMic) {
+          try {
+            const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+            extra.current.push(mic);
+            ctx.createMediaStreamSource(mic).connect(dest);
+          } catch { toast('warn', 'Микрофон недоступен — запишу без голоса'); }
+        }
+        s = new MediaStream([...disp.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+        disp.getVideoTracks()[0]?.addEventListener('ended', () => { if (rec.current?.state === 'recording') rec.current.stop(); });
+        setSources(null);
+      } else {
+        s = await navigator.mediaDevices.getUserMedia(m === 'cam' ? { audio: true, video: { width: 1920, height: 1080 } } : { audio: { echoCancellation: true, noiseSuppression: true } });
+      }
+      stream.current = s;
+      if (m !== 'mic' && videoRef.current) { videoRef.current.srcObject = s; videoRef.current.play().catch(() => undefined); }
       const an = ctx.createAnalyser();
       an.fftSize = 512;
-      ctx.createMediaStreamSource(s).connect(an);
+      if (s.getAudioTracks().length) ctx.createMediaStreamSource(s).connect(an);
       const buf = new Uint8Array(an.fftSize);
       const loop = () => {
         an.getByteTimeDomainData(buf);
@@ -363,7 +470,7 @@ function RecordPanel() {
       loop();
       setState('ready');
     } catch (e) {
-      setError(m === 'cam' ? 'Нет доступа к камере. Проверьте, что она подключена и не занята другой программой.' : 'Нет доступа к микрофону. Проверьте, что он подключён, и разрешите доступ в настройках Windows (Конфиденциальность → Микрофон).');
+      setError(m === 'screen' ? 'Не удалось начать запись экрана. Попробуйте выбрать другое окно.' : m === 'cam' ? 'Нет доступа к камере. Проверьте, что она подключена и не занята другой программой.' : 'Нет доступа к микрофону. Проверьте, что он подключён, и разрешите доступ в настройках Windows (Конфиденциальность → Микрофон).');
       setState('idle');
     }
   };
@@ -371,7 +478,7 @@ function RecordPanel() {
   const start = () => {
     if (!stream.current) return;
     chunks.current = [];
-    const mime = mode === 'cam' ? 'video/webm;codecs=vp9,opus' : 'audio/webm;codecs=opus';
+    const mime = mode !== 'mic' ? 'video/webm;codecs=vp9,opus' : 'audio/webm;codecs=opus';
     const r = new MediaRecorder(stream.current, MediaRecorder.isTypeSupported(mime) ? { mimeType: mime } : undefined);
     r.ondataavailable = e => { if (e.data.size) chunks.current.push(e.data); };
     r.onstop = async () => {
@@ -385,7 +492,8 @@ function RecordPanel() {
         if (m) {
           if (m.kind === 'audio') A.addToTimeline(m.id, 'audio', { start: at });
           else A.addToTimeline(m.id, 'main');
-          toast('success', mode === 'cam' ? 'Видео с камеры добавлено' : 'Голос записан и добавлен на таймлайн', { detail: path });
+          toast('success', mode === 'screen' ? 'Запись экрана добавлена в ролик' : mode === 'cam' ? 'Видео с камеры добавлено' : 'Голос записан и добавлен на таймлайн', { detail: path });
+          if (mode === 'screen') api.restore();
         }
       } catch (e) {
         toast('error', 'Не удалось сохранить запись', { detail: String(e) });
@@ -398,6 +506,7 @@ function RecordPanel() {
     startedAt.current = performance.now();
     set({ playing: mode === 'mic' });
     setState('rec');
+    if (mode === 'screen') toast('info', 'Идёт запись экрана', { detail: 'Сверните «Кадр». Чтобы закончить, вернитесь и нажмите «Остановить».', ttl: 6000 });
   };
   const stop = () => { rec.current?.stop(); set({ playing: false }); };
 
@@ -405,14 +514,30 @@ function RecordPanel() {
     <>
       <div className="panel-head"><Mic size={16} /><h3>Запись</h3></div>
       <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Segmented value={mode} onChange={m => { setMode(m); if (state !== 'idle') prepare(m); }} options={[{ value: 'mic', label: <><Mic size={14} /> Голос</> }, { value: 'cam', label: <><Camera size={14} /> Камера</> }]} />
+        <Segmented value={mode} onChange={m => { setMode(m); setSources(null); if (state !== 'idle') { if (m === 'screen') { release(); setState('idle'); } else prepare(m); } }} options={[
+          { value: 'mic', label: <><Mic size={14} /> Голос</> }, { value: 'cam', label: <><Camera size={14} /> Камера</> }, { value: 'screen', label: <><Monitor size={14} /> Экран</> }]} />
         <div className="tip-card">
-          {mode === 'mic' ? <Mic size={18} color="var(--accent)" style={{ flex: 'none' }} /> : <Camera size={18} color="var(--accent)" style={{ flex: 'none' }} />}
+          {mode === 'mic' ? <Mic size={18} color="var(--accent)" style={{ flex: 'none' }} /> : mode === 'cam' ? <Camera size={18} color="var(--accent)" style={{ flex: 'none' }} /> : <Monitor size={18} color="var(--accent)" style={{ flex: 'none' }} />}
           <div>{mode === 'mic'
             ? 'Запишите закадровый голос. Во время записи ролик проигрывается, чтобы вы говорили точно в такт. Запись встанет на звуковую дорожку с места линии времени.'
-            : 'Запишите себя на камеру — видео встанет в конец ролика.'}</div>
+            : mode === 'cam' ? 'Запишите себя на камеру — видео встанет в конец ролика.'
+              : 'Запишите экран или окно программы: для уроков, обзоров и инструкций. Можно сразу говорить в микрофон. Во время записи сверните «Кадр», а потом вернитесь и нажмите «Остановить».'}</div>
         </div>
-        {mode === 'cam' && <video ref={videoRef} muted playsInline style={{ width: '100%', aspectRatio: '16/9', background: '#000', borderRadius: 10, objectFit: 'cover', display: state === 'idle' ? 'none' : 'block' }} />}
+        {mode === 'screen' && state === 'idle' && !sources && <>
+          <Switch label="Звук компьютера" checked={sysAudio} onChange={setSysAudio} hint="Всё, что слышно в колонках: видео, игра, звонок" />
+          <Switch label="Мой голос (микрофон)" checked={withMic} onChange={setWithMic} />
+        </>}
+        {sources && (
+          <div className="screen-grid">
+            {sources.map(src => (
+              <button key={src.id} className="tile" onClick={() => prepare('screen', src.id)}>
+                <div className="t-prev" style={{ backgroundImage: `url("${src.thumb}")`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
+                <span className="t-name">{src.screen ? <Monitor size={11} style={{ verticalAlign: -1 }} /> : null} {src.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {mode !== 'mic' && <video ref={videoRef} muted playsInline style={{ width: '100%', aspectRatio: '16/9', background: '#000', borderRadius: 10, objectFit: mode === 'screen' ? 'contain' : 'cover', display: state === 'idle' ? 'none' : 'block' }} />}
         {state !== 'idle' && (
           <div>
             <div className="label" style={{ marginBottom: 6 }}>Громкость <span className="mono">{state === 'rec' ? formatTime(elapsed) : ''}</span></div>
@@ -421,7 +546,9 @@ function RecordPanel() {
           </div>
         )}
         {error && <div className="warning-box"><TriangleAlert size={16} color="var(--warn)" /><div className="small-text">{error}</div></div>}
-        {state === 'idle' && <button className="btn big" onClick={() => prepare()}>{mode === 'mic' ? <Mic size={17} /> : <Camera size={17} />} Включить {mode === 'mic' ? 'микрофон' : 'камеру'}</button>}
+        {state === 'idle' && mode !== 'screen' && <button className="btn big" onClick={() => prepare()}>{mode === 'mic' ? <Mic size={17} /> : <Camera size={17} />} Включить {mode === 'mic' ? 'микрофон' : 'камеру'}</button>}
+        {state === 'idle' && mode === 'screen' && !sources && <button className="btn big" disabled={listing} onClick={listScreens}><Monitor size={17} /> {listing ? 'Ищу экраны и окна…' : 'Выбрать, что записывать'}</button>}
+        {sources && <button className="btn small ghost" onClick={() => setSources(null)}>Отмена</button>}
         {state === 'ready' && <button className="btn primary big" onClick={start}><span style={{ width: 12, height: 12, borderRadius: '50%', background: '#fff' }} /> Начать запись</button>}
         {state === 'rec' && <button className="btn danger big" onClick={stop}><Square size={15} fill="currentColor" /> Остановить ({formatTime(elapsed)})</button>}
         {state === 'saving' && <button className="btn big" disabled><span className="spinner" /> Сохраняю…</button>}
@@ -431,6 +558,7 @@ function RecordPanel() {
 }
 
 // ── ИИ-инструменты ───────────────────────────────────
+
 function AiPanel() {
   const settings = useStore(s => s.settings);
   const secrets = useStore(s => s.secrets);
@@ -438,6 +566,9 @@ function AiPanel() {
   const [min, setMin] = useState(0.6);
   const preset = providerPreset(settings.ai.provider);
   const ready = !preset.needsKey || secrets[preset.id];
+  const [loud, setLoud] = useState<{ lufs: number; peak: number } | null>(null);
+  const [busy, setBusy] = useState('');
+  const run = (key: string, fn: () => Promise<unknown>) => { setBusy(key); fn().catch(e => { if (String(e?.message || e) !== 'Отменено') toast('error', String(e?.message || e)); }).finally(() => setBusy('')); };
   const IDEAS = [
     'Сделай динамичный ролик: убери паузы, добавь переходы и музыку потише',
     'Добавь красивый заголовок в начало и подпись в конце',
@@ -471,6 +602,36 @@ function AiPanel() {
           <div className="row"><Captions size={16} color="var(--accent)" /><b>Субтитры из речи</b></div>
           <div className="small-text muted">Нужен ключ OpenAI или Groq (распознавание речи). Язык: {settings.ai.speechLanguage || 'авто'}.</div>
           <button className="btn" onClick={() => A.transcribeProject({ addSubs: true }).catch(() => undefined)}><Captions size={14} /> Сделать субтитры</button>
+        </div>
+        <div className="card">
+          <div className="row"><Eraser size={16} color="var(--accent)" /><b>Убрать «эээ» и слова-паразиты</b></div>
+          <div className="small-text muted">Находит «эээ», «ммм», «как бы», «короче» и вырезает их из речи. Нужен ключ для распознавания речи.</div>
+          <button className="btn" disabled={busy === 'fill'} onClick={() => run('fill', () => S.removeFillers({ confirm: true }))}><Eraser size={14} /> {busy === 'fill' ? 'Ищу…' : 'Найти и убрать'}</button>
+        </div>
+        <div className="card">
+          <div className="row"><Smartphone size={16} color="var(--accent)" /><b>Вертикальное видео с лицом в центре</b></div>
+          <div className="small-text muted">Делает кадр 9:16 для Reels, Shorts и TikTok, а «камера» сама следит за лицом. Работает без интернета.</div>
+          <button className="btn" disabled={busy === 'vert'} onClick={() => run('vert', async () => {
+            const r = await S.autoReframe();
+            toast('success', 'Готово: вертикальный кадр', { detail: r.faces ? `Лицо найдено в ${r.clips} клип(ах)` : 'Лиц не нашлось — кадр по центру' });
+          })}><Smartphone size={14} /> {busy === 'vert' ? 'Ищу лица…' : 'Сделать вертикальное'}</button>
+        </div>
+        <div className="card">
+          <div className="row"><Mic2 size={16} color="var(--accent)" /><b>Студийный звук и громкость</b></div>
+          <div className="small-text muted">Убирает шум и делает голос чистым и плотным, как в студии. Громкость при сохранении подгоняется под соцсети.</div>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn" onClick={() => { const n = S.studioVoiceAll(true); toast(n ? 'success' : 'info', n ? `Студийный голос включён для ${n} клип(ов)` : 'В ролике нет клипов со звуком'); }}><Mic2 size={14} /> Включить для всех</button>
+            <button className="btn ghost" disabled={busy === 'loud'} onClick={() => run('loud', async () => setLoud(await S.analyzeLoudness()))}><Gauge size={14} /> {busy === 'loud' ? 'Слушаю…' : 'Измерить громкость'}</button>
+          </div>
+          {loud && <div className="small-text">Сейчас {loud.lufs.toFixed(1)} LUFS — {S.loudnessVerdict(loud.lufs)}. При сохранении станет {settings.loudness} LUFS.</div>}
+        </div>
+        <div className="card">
+          <div className="row"><Director size={16} color="var(--accent)" /><b>ИИ-режиссёр</b></div>
+          <div className="small-text muted">Помощник смотрит ролик и советует, что улучшить, или пишет главы, описание и хэштеги.</div>
+          <div className="quick">
+            <button className="chip" onClick={() => askAssistant(S.DIRECTOR_PROMPT, true)}><Director size={12} /> Разбор ролика</button>
+            <button className="chip" onClick={() => askAssistant(S.CHAPTERS_PROMPT)}><BookOpenText size={12} /> Главы, описание, хэштеги</button>
+          </div>
         </div>
         <div className="card">
           <div className="row"><WandSparkles size={16} color="var(--accent)" /><b>Попросить помощника</b></div>

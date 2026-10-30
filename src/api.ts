@@ -17,5 +17,6 @@ export interface AppInfo {
   videosDir: string;
   documentsDir: string;
   userData: string;
+  assetsDir: string;
   pendingOpen: string | null;
 }

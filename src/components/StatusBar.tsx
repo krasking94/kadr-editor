@@ -1,9 +1,10 @@
 // Строка состояния внизу: последнее действие, фоновые задачи с прогрессом, подключение ИИ.
 import { useEffect, useState } from 'react';
-import { Bot, X } from 'lucide-react';
+import { Bot, CircleCheck, Clock, FolderOpen, ListVideo, TriangleAlert, X } from 'lucide-react';
 import { api } from '../api';
 import { formatTime, projectDuration } from '../../shared/timeline';
 import { set, sourceLabel, useStore } from '../state/store';
+import { clearFinishedQueue, removeFromQueue } from '../state/actions';
 
 export function StatusBar() {
   const last = useStore(s => s.lastAction);
@@ -11,6 +12,8 @@ export function StatusBar() {
   const project = useStore(s => s.project)!;
   const zoom = useStore(s => s.zoom);
   const info = useStore(s => s.info);
+  const queue = useStore(s => s.exportQueue);
+  const [queueOpen, setQueueOpen] = useState(false);
   const [mcp, setMcp] = useState<{ running: boolean; port: number; error?: string; lastClient?: string } | null>(null);
 
   useEffect(() => {
@@ -39,6 +42,25 @@ export function StatusBar() {
         </div>
       ))}
       <div className="spacer" />
+      {queue.length > 0 && (
+        <div className="item" style={{ cursor: 'pointer', position: 'relative' }} onClick={() => setQueueOpen(o => !o)}>
+          <ListVideo size={12} color="var(--accent)" /> Очередь: {queue.filter(q => q.state === 'done').length} из {queue.length}
+          {queueOpen && (
+            <div className="queue-pop" onClick={e => e.stopPropagation()}>
+              <div className="row" style={{ justifyContent: 'space-between' }}><b>Очередь сохранения</b>
+                <button className="btn small ghost" onClick={() => { clearFinishedQueue(); setQueueOpen(false); }}>Убрать готовые</button></div>
+              {queue.map(q => (
+                <div key={q.id} className="queue-row" title={q.error || q.outPath}>
+                  {q.state === 'run' ? <span className="spinner" style={{ width: 11, height: 11 }} /> : q.state === 'done' ? <CircleCheck size={13} color="var(--good)" /> : q.state === 'wait' ? <Clock size={13} /> : <TriangleAlert size={13} color="var(--bad)" />}
+                  <span className="q-name">{q.name}</span>
+                  {q.state === 'done' && <button className="icon-btn small" data-tip="Показать в папке" onClick={() => api.showItem(q.outPath)}><FolderOpen size={12} /></button>}
+                  {q.state === 'wait' && <button className="icon-btn small" data-tip="Убрать из очереди" onClick={() => removeFromQueue(q.id)}><X size={12} /></button>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {info && !info.ffmpeg.ok && <div className="item" style={{ color: 'var(--bad)' }}>FFmpeg не найден</div>}
       <div className="item">{project.width}×{project.height} · {project.fps} кадр/с</div>
       <div className="item mono">{formatTime(projectDuration(project))}</div>
