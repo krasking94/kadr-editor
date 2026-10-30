@@ -1,6 +1,6 @@
 // Сохранение настроек и применение темы оформления.
 import { api } from '../api';
-import type { Settings } from '../../shared/settings';
+import { defaultLayout, type Layout, type Settings } from '../../shared/settings';
 import { get, set } from './store';
 
 export async function loadSettings() {
@@ -39,4 +39,11 @@ export function watchSystemTheme() {
   const h = () => applyTheme(get().settings);
   media.addEventListener('change', h);
   return () => media!.removeEventListener('change', h);
+}
+
+// Расположение панелей запоминается между запусками
+export const layoutOf = (s: Settings): Layout => ({ ...defaultLayout(), ...(s.layout || {}) });
+
+export function saveLayout(patch: Partial<Layout>) {
+  return saveSettings({ layout: { ...layoutOf(get().settings), ...patch } });
 }

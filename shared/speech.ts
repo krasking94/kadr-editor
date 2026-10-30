@@ -24,7 +24,9 @@ export function chunkWords(words: TimedWord[], maxWords = 3, maxChars = 22): { s
   const flush = () => {
     if (!cur.length) return;
     const start = cur[0].s, end = cur[cur.length - 1].e;
-    out.push({ start, end, text: cur.map(w => w.w).join(' '), words: cur.map(w => ({ s: +(w.s - start).toFixed(3), e: +(w.e - start).toFixed(3), w: w.w })) });
+    // точки и запятые на крупных субтитрах лишние; вопрос и восклицание оставляем
+    const show = (w: string) => w.replace(/[.,;:]+$/, '') || w;
+    out.push({ start, end, text: cur.map(w => show(w.w)).join(' '), words: cur.map(w => ({ s: +(w.s - start).toFixed(3), e: +(w.e - start).toFixed(3), w: show(w.w) })) });
     cur = [];
   };
   for (const w of words) {
@@ -75,4 +77,25 @@ export function simplifyPath<T extends { t: number; x: number; y: number }>(pts:
     if (best >= 0) { keep[best] = true; stack.push([a, best], [best, b]); }
   }
   return pts.filter((_, i) => keep[i]);
+}
+
+/**
+ * Сервисы распознавания отдают слова со временем, но без знаков препинания и заглавных букв —
+ * они есть только в тексте фраз. Переносим написание из текста фразы на слова.
+ */
+export function punctuate<T extends { w: string }>(words: T[], text: string): T[] {
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const key = (s: string) => s.toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]/gu, '');
+  let j = 0;
+  return words.map(w => {
+    const k = key(w.w);
+    for (let d = 0; d < 4 && j + d < tokens.length; d++) {
+      if (key(tokens[j + d]) === k && k) {
+        const t = tokens[j + d];
+        j += d + 1;
+        return { ...w, w: t };
+      }
+    }
+    return w;
+  });
 }

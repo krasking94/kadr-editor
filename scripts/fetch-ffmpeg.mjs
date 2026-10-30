@@ -1,5 +1,5 @@
 // Скачивает FFmpeg для Windows в resources/ffmpeg/win32 (его кладёт в установщик electron-builder).
-// FFmpeg — отдельная программа со своей лицензией (GPL), «Кадр» вызывает её как внешний процесс.
+// FFmpeg — отдельная программа со своей лицензией (GPL), «Хлопушка» вызывает её как внешний процесс.
 import { createWriteStream, existsSync, mkdirSync, readdirSync, rmSync, statSync, copyFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';

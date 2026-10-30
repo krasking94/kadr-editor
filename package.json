@@ -1,8 +1,8 @@
 {
   "name": "kadr",
-  "productName": "Kadr",
-  "version": "0.2.0",
-  "description": "Кадр — простой и красивый видеоредактор с ИИ-помощником",
+  "productName": "Hlopushka",
+  "version": "0.3.0",
+  "description": "Хлопушка — простой и красивый видеоредактор с ИИ-помощником",
   "author": {
     "name": "Максим (krasking94)"
   },
@@ -47,8 +47,8 @@
   },
   "build": {
     "appId": "io.github.krasking94.kadr",
-    "productName": "Kadr",
-    "executableName": "Kadr",
+    "productName": "Hlopushka",
+    "executableName": "Hlopushka",
     "copyright": "© 2026 Максим (krasking94). Лицензия MIT.",
     "publish": [
       {
@@ -85,7 +85,7 @@
       {
         "ext": "kadr",
         "name": "KadrProject",
-        "description": "Проект «Кадр»",
+        "description": "Проект «Хлопушки»",
         "role": "Editor"
       }
     ],
@@ -105,7 +105,7 @@
         }
       ],
       "icon": "build/icon.png",
-      "artifactName": "Kadr-${version}-win-x64.${ext}"
+      "artifactName": "Hlopushka-${version}-win-x64.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -113,9 +113,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Кадр",
-      "uninstallDisplayName": "Кадр — видеоредактор",
-      "artifactName": "Kadr-Setup-${version}.${ext}",
+      "shortcutName": "Хлопушка",
+      "uninstallDisplayName": "Хлопушка — видеоредактор",
+      "artifactName": "Hlopushka-Setup-${version}.${ext}",
       "installerLanguages": [
         "ru_RU",
         "en_US"

@@ -1,6 +1,6 @@
 // Стартовый экран: выбрать формат нового ролика, открыть недавний проект или пример.
 import { useEffect, useState } from 'react';
-import { Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, Plug, Settings, Sparkles, Undo2, Wand2, X } from 'lucide-react';
+import { Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, Plug, Settings, Sparkles, Undo2, Wand2, X, ScrollText, Smartphone } from 'lucide-react';
 import { api } from '../api';
 import { FORMAT_PRESETS } from '../../shared/timeline';
 import { set, toast, useStore } from '../state/store';
@@ -14,6 +14,8 @@ const FEATURES = [
   { icon: Sparkles, title: 'ИИ-помощник', text: 'Пишете «убери паузы и сделай субтитры» — и видите, как он монтирует.' },
   { icon: Plug, title: 'Любая нейросеть', text: 'Claude, ChatGPT, Gemini, DeepSeek, YandexGPT, локальные модели. Плюс MCP для внешних ИИ.' },
   { icon: Undo2, title: 'Ничего не страшно', text: 'Любой шаг отменяется. История шагов показывает, кто и что изменил.' },
+  { icon: ScrollText, title: 'Монтаж через текст', text: 'Удалили фразу в тексте — она вырезана из видео. Паузы и «эээ» убираются одной кнопкой.' },
+  { icon: Smartphone, title: 'Shorts из длинного видео', text: 'ИИ находит лучшие моменты и делает вертикальные ролики с субтитрами и лицом в центре.' },
   { icon: Captions, title: 'Субтитры из речи', text: 'Распознавание речи и красивые подписи в один клик.' },
   { icon: Wand2, title: 'Цвет и эффекты', text: '10 готовых стилей, яркость, контраст, виньетка, плёнка, плавное приближение.' },
   { icon: Layers, title: 'Слои и переходы', text: 'Картинка в картинке, 19 переходов, текст с анимацией, музыка с приглушением под голос.' },
@@ -63,7 +65,7 @@ export function Welcome() {
         <div className="hero">
           <div className="row" style={{ gap: 12, marginBottom: 22 }}>
             <Logo size={40} />
-            <span style={{ fontFamily: 'var(--display)', fontWeight: 700, fontSize: 22 }}>Кадр</span>
+            <span style={{ fontFamily: 'var(--display)', fontWeight: 700, fontSize: 22 }}>Хлопушка</span>
             <span className="badge">версия {info?.version || '…'}</span>
           </div>
           <h1>Монтаж, который <span className="grad">понятен с первого кадра</span></h1>
@@ -79,7 +81,7 @@ export function Welcome() {
         {info && !info.ffmpeg.ok && (
           <div className="warning-box">
             <Settings size={18} color="var(--warn)" />
-            <div><b>Не найден FFmpeg.</b> Это бесплатный «движок», который сохраняет видео. В установщике «Кадра» он уже есть — попробуйте переустановить программу.</div>
+            <div><b>Не найден FFmpeg.</b> Это бесплатный «движок», который сохраняет видео. В установщике «Хлопушки» он уже есть — попробуйте переустановить программу.</div>
           </div>
         )}
 
@@ -129,7 +131,7 @@ export function Welcome() {
         )}
 
         <div>
-          <div className="section-title">Что умеет «Кадр»</div>
+          <div className="section-title">Что умеет «Хлопушка»</div>
           <div className="feature-row">
             {FEATURES.map(f => (
               <div key={f.title} className="feature">

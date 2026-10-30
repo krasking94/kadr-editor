@@ -8,6 +8,9 @@ import * as A from './actions';
 import { commit, get, redo, set, undo } from './store';
 import { generate } from './generate';
 import * as S from './smart';
+import * as SC from './script';
+import * as MT from './media-tools';
+import { timelineWords } from '../../shared/transcript';
 import type { ShapeKind } from '../lib/stickers';
 
 export interface ToolOutput { text: string; image?: string; isError?: boolean }
@@ -172,6 +175,44 @@ export async function execTool(name: string, a: any, source: string): Promise<To
     case 'analyze_audio': {
       const r = await S.analyzeLoudness();
       return ok('Loudness', { lufs: r2(r.lufs), true_peak_db: r2(r.peak), range_lu: r2(r.lra), verdict_ru: S.loudnessVerdict(r.lufs), export_target_lufs: get().settings.loudness || null });
+    }
+    case 'get_transcript': {
+      if (!(await SC.ensureTranscripts({ force: !!a.force, source }))) return { text: 'No speech found (or no speech-recognition key in Settings → AI)', isError: true };
+      return ok('Transcript of the main track', SC.transcriptForTool());
+    }
+    case 'cut_transcript': {
+      const words = timelineWords(get().project!);
+      if (!words.length) return { text: 'No transcript yet: call get_transcript first', isError: true };
+      const spans: [number, number][] = (a.ranges || []).map((r: any) => [Number(r.from_word), Number(r.to_word)]);
+      if (a.phrase) spans.push(...SC.findPhrase(words, String(a.phrase)));
+      if (!spans.length) return { text: 'Nothing to cut: phrase not found', isError: true };
+      const sec = SC.cutWordSpans(spans, `Вырезано по тексту: ${spans.length}`, source);
+      return ok(`Cut ${spans.length} pieces, ${r2(sec)} s removed. Word numbers changed: call get_transcript again before the next cut.`);
+    }
+    case 'shorten_pauses': {
+      if (!(await SC.ensureTranscripts({ source }))) return { text: 'No speech found', isError: true };
+      const r = SC.shortenPauses(a.min_gap ?? 0.7, a.keep ?? 0.3, source);
+      return ok(`Shortened ${r.count} pauses, ${r2(r.seconds)} s removed`);
+    }
+    case 'find_shorts': {
+      const items = await SC.findShorts({ count: a.count, min: a.min, max: a.max, even: !!a.even, source });
+      return ok(`Found ${items.length} moments`, items.map(i => ({ id: i.id, start: r2(i.start), end: r2(i.end), title: i.title, why: i.why, score: i.score, checked: i.checked })));
+    }
+    case 'make_shorts': {
+      const paths = await SC.makeShorts(a.ids, { subtitles: a.subtitles !== false, title: a.title !== false, faces: a.face_tracking !== false, ask: false, source });
+      return paths.length ? ok('Queued for export', paths) : { text: 'No shorts to make: call find_shorts first', isError: true };
+    }
+    case 'beat_sync': {
+      const every = [1, 2, 4].includes(Number(a.every)) ? Number(a.every) : 2;
+      const n = a.mode === 'markers' ? await MT.beatMarkers(every, source) : await MT.cutToBeats(every, source);
+      return ok(a.mode === 'markers' ? `Added ${n} beat markers` : `Trimmed ${n} clips to the beat`);
+    }
+    case 'export_formats': {
+      const p = get().project!;
+      const info = get().info;
+      const base = a.path || `${get().settings.exportDir || info?.videosDir || ''}/${p.name.replace(/[\\/:*?"<>|]+/g, '_')}.mp4`;
+      const n = await SC.queueFormats(a.formats || [], { outPath: base, format: 'mp4', width: p.width, height: p.height, fps: p.fps, quality: 'good', encoder: 'auto', loudness: get().settings.loudness || undefined });
+      return ok(`Queued ${n} formats`);
     }
     case 'set_project': {
       commit('Настройки проекта изменены', p => {

@@ -1,4 +1,4 @@
-// Превращает проект «Кадра» в команду FFmpeg. Чистая функция: её легко проверить тестами.
+// Превращает проект «Хлопушки» в команду FFmpeg. Чистая функция: её легко проверить тестами.
 import type { ExportOptions, MediaClip, MediaItem, Project, TextClip, TextRender } from './types';
 import { COLOR_PRESETS, clipDuration, layoutProject, projectDuration, transitionDuration } from './timeline';
 

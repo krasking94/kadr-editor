@@ -347,7 +347,7 @@ function ProcessSection({ clip }: { clip: MediaClip }) {
           <button className="btn small ghost" onClick={() => S.clearPath(clip.id)}>Выключить</button>
         </div>
       )}
-      <div className="small-text muted">Обработка делает копию файла в «Документы/Кадр/Обработка». Исходник не меняется.</div>
+      <div className="small-text muted">Обработка делает копию файла в «Документы/Хлопушка/Обработка». Исходник не меняется.</div>
     </div>
   );
 }

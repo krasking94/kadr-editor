@@ -2,7 +2,7 @@
 // перевод и файлы субтитров, вертикаль со слежением за лицом, стикеры, громкость.
 // Как и остальные действия, их вызывают кнопки, ИИ-помощник и внешний ИИ по MCP.
 import { api } from '../api';
-import type { MediaClip, MediaItem, Project, TextClip } from '../../shared/types';
+import type { MediaClip, MediaItem, PathPoint, Project, TextClip } from '../../shared/types';
 import { clipDuration, clipEnd, findClip, mainTrack, makeMediaClip, makeTextClip, mediaById, uid } from '../../shared/timeline';
 import { baseLayerSize } from '../../shared/export-graph';
 import { parseSrt, toSrt } from '../../shared/srt';
@@ -275,6 +275,40 @@ export function studioVoiceAll(on = true, source?: string): number {
 }
 
 // ── Вертикаль 9:16 со слежением за лицом ─────────────
+/**
+ * Путь «камеры» за лицом для клипов основной дорожки в кадре W×H. range — только часть таймлайна
+ * (для коротких роликов незачем искать лица во всём часовом видео).
+ */
+export async function facePaths(p: Project, clips: MediaClip[], W: number, H: number,
+  o: { signal?: AbortSignal; onProgress?: (k: number) => void; range?: { start: number; end: number } } = {}): Promise<Map<string, PathPoint[]>> {
+  const out = new Map<string, PathPoint[]>();
+  for (const [i, c] of clips.entries()) {
+    const m = mediaById(p, c.mediaId);
+    if (!m || m.kind !== 'video' || m.missing) continue;
+    let from = c.in, to = c.out;
+    if (o.range) {
+      const a = Math.max(o.range.start, c.start), b = Math.min(o.range.end, clipEnd(c));
+      if (b <= a) continue;
+      from = c.in + (a - c.start) * c.speed; to = c.in + (b - c.start) * c.speed;
+    }
+    const samples = await trackFaces(m.path, from, to, {
+      step: Math.max(0.2, Math.min(1, (to - from) / 240)), signal: o.signal,
+      onProgress: k => o.onProgress?.((i + k) / clips.length),
+    });
+    if (!samples.some(s => s.found)) continue;
+    // центр лица в исходнике → положение слоя, чтобы лицо было посередине кадра
+    const base = baseLayerSize(m, 'fill', W, H);
+    const kx = base.w / W, ky = base.h / H;
+    const maxX = Math.max(0, (kx - 1) / 2), maxY = Math.max(0, (ky - 1) / 2);
+    out.set(c.id, cameraPath(samples).map(pt => ({
+      t: Math.max(0, (pt.t - c.in) / c.speed),
+      x: 0.5 + Math.max(-maxX, Math.min(maxX, (0.5 - pt.x) * kx)),
+      y: 0.5 + Math.max(-maxY, Math.min(maxY, (0.5 - pt.y) * ky)),
+    })));
+  }
+  return out;
+}
+
 export async function autoReframe(o: { width?: number; height?: number; source?: string } = {}): Promise<{ clips: number; faces: number }> {
   const W = o.width ?? 1080, H = o.height ?? 1920;
   const p0 = get().project!;
@@ -283,7 +317,7 @@ export async function autoReframe(o: { width?: number; height?: number; source?:
   if (!clips.length) { toast('info', 'На основной дорожке нет видео'); return { clips: 0, faces: 0 }; }
   const ctrl = new AbortController();
   const task = startTask('Ищу лица для вертикали', () => ctrl.abort());
-  const paths = new Map<string, { t: number; x: number; y: number }[]>();
+  const paths = new Map<string, PathPoint[]>();
   let faces = 0;
   // без WebGL (редко: старый драйвер или виртуальная машина) лица искать нечем — тогда просто кадр по центру
   let canTrack = true;
@@ -293,27 +327,7 @@ export async function autoReframe(o: { width?: number; height?: number; source?:
     toast('warn', 'Поиск лиц недоступен на этом компьютере', { detail: 'Видеокарта не дала программе WebGL. Сделаю вертикальный кадр по центру, положение можно поправить мышью.', ttl: 9000 });
   }
   try {
-    for (const [i, c] of clips.entries()) {
-      if (!canTrack) break;
-      const m = mediaById(p0, c.mediaId)!;
-      if (m.kind !== 'video' || m.missing) continue;
-      const samples = await trackFaces(m.path, c.in, c.out, {
-        step: Math.max(0.2, Math.min(1, (c.out - c.in) / 240)), signal: ctrl.signal,
-        onProgress: k => updateTask(task, { progress: (i + k) / clips.length }),
-      });
-      if (!samples.some(s => s.found)) continue;
-      faces++;
-      // центр лица в исходнике → положение слоя, чтобы лицо было посередине вертикального кадра
-      const base = baseLayerSize(m, 'fill', W, H);
-      const kx = base.w / W, ky = base.h / H;
-      const maxX = Math.max(0, (kx - 1) / 2), maxY = Math.max(0, (ky - 1) / 2);
-      const pts = cameraPath(samples).map(pt => ({
-        t: Math.max(0, (pt.t - c.in) / c.speed),
-        x: 0.5 + Math.max(-maxX, Math.min(maxX, (0.5 - pt.x) * kx)),
-        y: 0.5 + Math.max(-maxY, Math.min(maxY, (0.5 - pt.y) * ky)),
-      }));
-      paths.set(c.id, pts);
-    }
+    if (canTrack) for (const [id, pts] of await facePaths(p0, clips, W, H, { signal: ctrl.signal, onProgress: k => updateTask(task, { progress: k }) })) { paths.set(id, pts); faces++; }
   } catch (e) {
     const msg = clean(e);
     if (msg !== 'Отменено') toast('error', 'Не удалось найти лица', { detail: msg });

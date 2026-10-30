@@ -240,6 +240,44 @@ export const TOOLS: ToolDef[] = [
     inputSchema: obj({}),
   },
   {
+    name: 'get_transcript', title: 'Читаю текст ролика',
+    description: 'Text-based editing: get the spoken text of the main track as sentences with word numbers (from_word..to_word) and timeline times. Recognizes speech first if needed (needs a speech-recognition key). Use with cut_transcript to remove phrases like in a document.',
+    inputSchema: obj({ force: bool('Recognize speech again even if a transcript exists') }),
+  },
+  {
+    name: 'cut_transcript', title: 'Вырезаю фразы по тексту',
+    description: 'Cut spoken words out of the video (and audio) like deleting text in a document. Give word ranges from get_transcript (from_word/to_word, inclusive) and/or an exact phrase to remove everywhere it is said. All cuts are one undo step. Subtitles move with the speech.',
+    inputSchema: obj({
+      ranges: { type: 'array', items: obj({ from_word: num('First word number'), to_word: num('Last word number, inclusive') }, ['from_word', 'to_word']), description: 'Word ranges to remove' },
+      phrase: str('Remove every occurrence of this phrase (case and punctuation ignored)'),
+    }),
+  },
+  {
+    name: 'shorten_pauses', title: 'Укорачиваю паузы',
+    description: 'Using the transcript, shorten every silence between words longer than min_gap seconds down to keep seconds. More precise than remove_silence for speech.',
+    inputSchema: obj({ min_gap: num('Default 0.7'), keep: num('Default 0.3') }),
+  },
+  {
+    name: 'find_shorts', title: 'Ищу моменты для коротких роликов',
+    description: 'Find the best self-contained moments of a long video for vertical shorts (Reels/Shorts/TikTok) by the transcript with the configured AI (or split evenly by sentences when even=true). Returns ids, times, titles. Then call make_shorts.',
+    inputSchema: obj({ count: num('How many, default 5'), min: num('Min length, s, default 20'), max: num('Max length, s, default 60'), even: bool('Split evenly by sentences without AI') }),
+  },
+  {
+    name: 'make_shorts', title: 'Делаю короткие ролики',
+    description: 'Render moments from find_shorts as separate vertical 1080x1920 videos with face tracking, big word-by-word subtitles and a title, queued for export to the Videos folder. Returns output paths.',
+    inputSchema: obj({ ids: { type: 'array', items: { type: 'string' }, description: 'Short ids; default: the checked ones' }, subtitles: bool('Default true'), title: bool('Default true'), face_tracking: bool('Default true') }),
+  },
+  {
+    name: 'beat_sync', title: 'Монтирую под ритм',
+    description: 'Detect beats in the music clip (selected audio clip or the first one on audio tracks). mode "cut" trims main-track clips so every cut lands on a beat; mode "markers" only adds markers on beats. every: 1 = each beat, 2 = every other, 4 = each bar.',
+    inputSchema: obj({ mode: str('What to do', ['cut', 'markers']), every: num('1, 2 or 4; default 2') }),
+  },
+  {
+    name: 'export_formats', title: 'Сохраняю в других форматах',
+    description: 'Queue copies of the project in other aspect ratios at once (vertical 9:16, square 1:1, wide 16:9, post 4:5) with face tracking; the project itself is not changed.',
+    inputSchema: obj({ formats: { type: 'array', items: { type: 'string', enum: ['vertical', 'square', 'wide', 'post'] } }, path: str('Base output path .mp4; size is added to the name') }, ['formats']),
+  },
+  {
     name: 'set_project', title: 'Меняю формат проекта',
     description: 'Change project settings: name, resolution, fps, background color.',
     inputSchema: obj({
@@ -265,7 +303,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'generate_image', title: 'Рисую картинку',
-    description: 'Generate an image with the image AI configured in Kadr settings (OpenAI GPT Image, Google Nano Banana or FLUX), save it to the user Documents/Кадр/Сгенерировано folder, import it and place it on the timeline. Write a detailed visual prompt (subject, style, lighting, composition); English or Russian both work. place: "main" appends to the main track (or at index), "overlay" puts it over the video at start (picture-in-picture), "none" only imports to the media library. aspect defaults to the project format. Returns media_id and clip_id.',
+    description: 'Generate an image with the image AI configured in Hlopushka settings (OpenAI GPT Image, Google Nano Banana or FLUX), save it to the user Documents/Хлопушка/Сгенерировано folder, import it and place it on the timeline. Write a detailed visual prompt (subject, style, lighting, composition); English or Russian both work. place: "main" appends to the main track (or at index), "overlay" puts it over the video at start (picture-in-picture), "none" only imports to the media library. aspect defaults to the project format. Returns media_id and clip_id.',
     inputSchema: obj({
       prompt: str('What to draw'),
       aspect: str('Aspect ratio', ['16:9', '9:16', '1:1', '4:3', '3:4']),
@@ -331,11 +369,11 @@ export const TOOLS: ToolDef[] = [
   },
 ];
 
-export const MCP_INSTRUCTIONS = 'Kadr is a video editor. Call get_project first to see the timeline, then edit with the other tools. Every change appears live in the editor and can be undone by the user.';
+export const MCP_INSTRUCTIONS = 'Hlopushka is a video editor. Call get_project first to see the timeline, then edit with the other tools. Every change appears live in the editor and can be undone by the user.';
 
 export const TOOL_TITLES: Record<string, string> = Object.fromEntries(TOOLS.map(t => [t.name, t.title]));
 
-export const SYSTEM_PROMPT = `You are the built-in assistant of «Кадр» (Kadr), a video editor. You edit the user's project by calling tools.
+export const SYSTEM_PROMPT = `You are the built-in assistant of «Хлопушка» (Hlopushka), a video editor. You edit the user's project by calling tools.
 Rules:
 - Always answer the user in the language they write in (usually Russian), briefly and in plain words. The user is not a professional editor.
 - Before editing, call get_project to see ids and times. Times are in seconds.
@@ -345,4 +383,6 @@ Rules:
 - Never invent file paths; ask the user or use media already in the library.
 - For Reels/Shorts/TikTok prefer auto_reframe (keeps the face in frame) and make_subtitles with style "blogger".
 - For bad sound use studio_voice; for "эээ" and filler words use remove_fillers; for shaky video use stabilize_clip.
-- When asked for chapters, a description or hashtags, base them on the transcript (transcribe) and answer in text; add markers only if the user asks.`;
+- When asked for chapters, a description or hashtags, base them on the transcript (transcribe) and answer in text; add markers only if the user asks.
+- To remove specific phrases, repeats, mistakes or off-topic talk, use get_transcript then cut_transcript (text-based editing).
+- To turn a long video into Reels/Shorts use find_shorts then make_shorts. For music videos use beat_sync.`;

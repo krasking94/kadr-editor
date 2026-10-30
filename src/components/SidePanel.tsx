@@ -3,9 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Blend, Camera, Captions, Clapperboard, Film, FolderOpen, Image as ImageIcon, Layers, Mic, Music, Plus, Scissors,
   Sparkles, Square, Trash2, Type, Upload, Video, Wand2, WandSparkles, AudioLines, TriangleAlert, ImagePlus, Loader2, Speech, Volume2, Play,
-  Smile, Monitor, Languages, FileDown, FileUp, Eraser, Smartphone, Mic2, Gauge, BookOpenText, Clapperboard as Director,
+  Smile, Monitor, Languages, ScrollText, FileDown, FileUp, Eraser, Smartphone, Mic2, Gauge, BookOpenText, Clapperboard as Director,
 } from 'lucide-react';
 import * as S from '../state/smart';
+import * as MT from '../state/media-tools';
+import { ScriptPanel, ShortsPanel } from './ScriptPanel';
 import { EMOJI, SHAPES, SHAPE_COLORS, renderShape } from '../lib/stickers';
 import { imageProvider, type Voice } from '../../shared/generators';
 import { generate, cleanError, projectAspect, type GenKind } from '../state/generate';
@@ -21,10 +23,12 @@ import { transitionFx } from '../lib/transition-fx';
 import { DND_MEDIA, DND_TEXT } from '../lib/dnd';
 import { openMenu, Segmented, Slider, Switch } from './ui';
 
-export type RailTab = 'media' | 'text' | 'stickers' | 'transitions' | 'filters' | 'record' | 'create' | 'ai';
+export type RailTab = 'media' | 'script' | 'shorts' | 'text' | 'stickers' | 'transitions' | 'filters' | 'record' | 'create' | 'ai';
 
 const RAIL: { id: RailTab; label: string; icon: typeof Film; tip: string }[] = [
   { id: 'media', label: 'Медиа', icon: Film, tip: 'Ваши видео, фото и музыка' },
+  { id: 'script', label: 'Речь', icon: ScrollText, tip: 'Монтаж через текст: удалите слова — они вырежутся из видео' },
+  { id: 'shorts', label: 'Shorts', icon: Smartphone, tip: 'Нарезка длинного видео на короткие вертикальные ролики' },
   { id: 'text', label: 'Текст', icon: Type, tip: 'Заголовки, подписи, субтитры' },
   { id: 'stickers', label: 'Стикеры', icon: Smile, tip: 'Эмодзи, стрелки, рамки и другие фигуры поверх видео' },
   { id: 'transitions', label: 'Переходы', icon: Blend, tip: 'Плавные склейки между клипами' },
@@ -34,11 +38,11 @@ const RAIL: { id: RailTab; label: string; icon: typeof Film; tip: string }[] = [
   { id: 'ai', label: 'ИИ', icon: Sparkles, tip: 'Автоматический монтаж' },
 ];
 
-export function LeftRail({ tab, onTab }: { tab: RailTab | null; onTab: (t: RailTab) => void }) {
+export function LeftRail({ tab, onTab, right }: { tab: RailTab | null; onTab: (t: RailTab) => void; right?: boolean }) {
   return (
     <div className="left-rail">
       {RAIL.map(r => (
-        <button key={r.id} className={'rail-btn' + (tab === r.id ? ' on' : '')} onClick={() => onTab(r.id)} data-tip={r.tip} data-tip-pos="right">
+        <button key={r.id} className={'rail-btn' + (tab === r.id ? ' on' : '')} onClick={() => onTab(r.id)} data-tip={r.tip} data-tip-pos={right ? 'left' : 'right'}>
           <r.icon size={19} />{r.label}
         </button>
       ))}
@@ -46,10 +50,12 @@ export function LeftRail({ tab, onTab }: { tab: RailTab | null; onTab: (t: RailT
   );
 }
 
-export function SidePanel({ tab }: { tab: RailTab }) {
+export function SidePanel({ tab, width }: { tab: RailTab; width?: number }) {
   return (
-    <div className="side-panel" key={tab}>
+    <div className="side-panel" key={tab} style={width ? { width } : undefined}>
       {tab === 'media' && <MediaPanel />}
+      {tab === 'script' && <ScriptPanel />}
+      {tab === 'shorts' && <ShortsPanel />}
       {tab === 'text' && <TextPanel />}
       {tab === 'stickers' && <StickersPanel />}
       {tab === 'transitions' && <TransitionsPanel />}
@@ -122,6 +128,9 @@ function MediaCard({ m, thumb, strip, loading, used }: { m: MediaItem; thumb?: s
       { label: 'Поверх видео (картинка в картинке)', icon: <Layers size={14} />, onClick: () => A.addToTimeline(m.id, 'overlay') },
     ] : [{ label: 'На звуковую дорожку', icon: <Music size={14} />, onClick: () => A.addToTimeline(m.id, 'audio') }]),
     { separator: true },
+    ...(m.kind === 'video' && !m.missing ? [m.proxy
+      ? { label: 'Убрать лёгкую копию', icon: <Gauge size={14} />, onClick: () => MT.dropProxy(m.id) }
+      : { label: 'Сделать лёгкую копию (плавный просмотр)', icon: <Gauge size={14} />, onClick: () => MT.requestProxies([m.id]) }] : []),
     { label: 'Показать в папке', icon: <FolderOpen size={14} />, onClick: () => api.showItem(m.path) },
     ...(m.missing ? [{ label: 'Указать, где теперь файл…', icon: <TriangleAlert size={14} />, onClick: () => A.relinkMedia(m.id) }] : []),
     { label: used ? 'Удалить из проекта (и с таймлайна)' : 'Удалить из медиатеки', icon: <Trash2 size={14} />, danger: true, onClick: () => A.removeMedia(m.id) },
@@ -140,6 +149,7 @@ function MediaCard({ m, thumb, strip, loading, used }: { m: MediaItem; thumb?: s
         {!frame && m.kind !== 'audio' && (loading ? <span className="spinner" /> : <Icon size={22} />)}
         <span className="kind"><Icon size={11} /></span>
         {m.kind !== 'image' && <span className="dur">{formatTime(m.duration)}</span>}
+        {m.proxy && <span className="proxy-badge" data-tip="Есть лёгкая копия: просмотр плавный, сохранится оригинал">540p</span>}
         <button className="icon-btn small add" style={{ background: 'var(--accent)', color: '#fff' }} data-tip="Добавить на таймлайн"
           onClick={e => { e.stopPropagation(); menu(e.clientX, e.clientY); }}><Plus size={14} /></button>
         {scrub !== null && <div style={{ position: 'absolute', left: `${scrub * 100}%`, top: 0, bottom: 0, width: 2, background: 'var(--accent-2)' }} />}
@@ -506,7 +516,7 @@ function RecordPanel() {
     startedAt.current = performance.now();
     set({ playing: mode === 'mic' });
     setState('rec');
-    if (mode === 'screen') toast('info', 'Идёт запись экрана', { detail: 'Сверните «Кадр». Чтобы закончить, вернитесь и нажмите «Остановить».', ttl: 6000 });
+    if (mode === 'screen') toast('info', 'Идёт запись экрана', { detail: 'Сверните «Хлопушка». Чтобы закончить, вернитесь и нажмите «Остановить».', ttl: 6000 });
   };
   const stop = () => { rec.current?.stop(); set({ playing: false }); };
 
@@ -521,7 +531,7 @@ function RecordPanel() {
           <div>{mode === 'mic'
             ? 'Запишите закадровый голос. Во время записи ролик проигрывается, чтобы вы говорили точно в такт. Запись встанет на звуковую дорожку с места линии времени.'
             : mode === 'cam' ? 'Запишите себя на камеру — видео встанет в конец ролика.'
-              : 'Запишите экран или окно программы: для уроков, обзоров и инструкций. Можно сразу говорить в микрофон. Во время записи сверните «Кадр», а потом вернитесь и нажмите «Остановить».'}</div>
+              : 'Запишите экран или окно программы: для уроков, обзоров и инструкций. Можно сразу говорить в микрофон. Во время записи сверните «Хлопушка», а потом вернитесь и нажмите «Остановить».'}</div>
         </div>
         {mode === 'screen' && state === 'idle' && !sources && <>
           <Switch label="Звук компьютера" checked={sysAudio} onChange={setSysAudio} hint="Всё, что слышно в колонках: видео, игра, звонок" />
@@ -598,6 +608,7 @@ function AiPanel() {
             A.detectScenes(id).catch(e => toast('error', String(e.message || e)));
           }}><Scissors size={14} /> Найти сцены</button>
         </div>
+        <BeatsCard />
         <div className="card">
           <div className="row"><Captions size={16} color="var(--accent)" /><b>Субтитры из речи</b></div>
           <div className="small-text muted">Нужен ключ OpenAI или Groq (распознавание речи). Язык: {settings.ai.speechLanguage || 'авто'}.</div>
@@ -640,6 +651,27 @@ function AiPanel() {
         </div>
       </div>
     </>
+  );
+}
+
+function BeatsCard() {
+  const [every, setEvery] = useState<'1' | '2' | '4'>('2');
+  const busy = useStore(s => s.tasks.some(t => t.label === 'Ищу ритм в музыке'));
+  return (
+    <div className="card">
+      <div className="row"><Music size={16} color="var(--accent)" /><b>Склейка под ритм музыки</b></div>
+      <div className="small-text muted">Находит удары в музыке и подрезает клипы так, чтобы каждая смена кадра попадала в такт. Работает без интернета.</div>
+      <div className="label">Менять кадр</div>
+      <Segmented value={every} onChange={setEvery} options={[
+        { value: '1', label: 'Каждый удар', tip: 'Быстрый, динамичный монтаж' },
+        { value: '2', label: 'Через удар' },
+        { value: '4', label: 'Каждый такт', tip: 'Спокойный монтаж, раз в 4 удара' },
+      ]} />
+      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+        <button className="btn primary" disabled={busy} onClick={() => MT.cutToBeats(Number(every))}><Scissors size={14} /> Подрезать под ритм</button>
+        <button className="btn ghost" disabled={busy} onClick={() => MT.beatMarkers(Number(every)).then(n => n && toast('success', `Меток на долях: ${n}`))}>Только метки</button>
+      </div>
+    </div>
   );
 }
 
