@@ -7,14 +7,13 @@ import { Readable } from 'node:stream';
 import type { ExportOptions, Project } from '../shared/types';
 import { buildExportArgs } from '../shared/export-graph';
 import { projectDuration } from '../shared/timeline';
-import { FFMPEG, ffmpegAvailable, probe, thumbnails, waveform, detectSilence, detectScenes, hardwareEncoders, run } from './ffmpeg';
+import { FFMPEG, ffmpegAvailable, probe, thumbnails, waveform, detectSilence, detectScenes, hardwareEncoders, pcm, run } from './ffmpeg';
 import { getSettings, setSettings, setSecret, secretStatus } from './settings';
 import { attachWindow, notify } from './bridge';
 import { chat, complete, listModels, resetSession, stopAi, transcribeFile } from './ai';
 import { audioSnippet, cancelProcess, makeProxy, measureLoudness, processClip, type ProcessKind } from './process';
 import { detectBeats } from '../shared/beats';
 import { estimateWords } from '../shared/speech';
-import { spawn } from 'node:child_process';
 import { checkForUpdates, downloadUpdate, installUpdate, updateState } from './updater';
 import { clientStatus, mcpServerState, startMcpServer, stopMcpServer, syncClients } from './mcp';
 import { generateImage, generateMusic, generateSoundEffect, generateSpeech, listVoices } from './generate';
@@ -485,15 +484,8 @@ ipcMain.handle('ai:transcribe-media', async (_e, jobId: string, path: string, du
 // Доли в музыке: звук в виде чисел и поиск ударов
 ipcMain.handle('media:beats', async (_e, path: string, from: number, to: number) => {
   const sr = 11025;
-  const buf = await new Promise<Buffer>(resolve => {
-    const child = spawn(FFMPEG, ['-hide_banner', '-v', 'error', '-ss', String(from), '-t', String(Math.max(0.5, to - from)), '-i', path, '-vn', '-ac', '1', '-ar', String(sr), '-f', 'f32le', '-'], { windowsHide: true });
-    const chunks: Buffer[] = [];
-    child.stdout.on('data', d => chunks.push(d));
-    child.on('close', () => resolve(Buffer.concat(chunks)));
-    child.on('error', () => resolve(Buffer.alloc(0)));
-  });
-  const samples = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.length / 4));
-  const r = detectBeats(new Float32Array(samples), sr);
+  const samples = await pcm(path, sr, from, Math.max(0.5, to - from));
+  const r = detectBeats(samples, sr);
   return { ...r, beats: r.beats.map(b => b + from) };
 });
 

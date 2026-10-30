@@ -173,3 +173,18 @@ export async function hardwareEncoders(): Promise<string[]> {
   encoderCache = found;
   return found;
 }
+
+// Звук файла в виде чисел (моно, заданная частота): для поиска долей и проверки, где есть голос
+export function pcm(path: string, sr: number, from = 0, len?: number): Promise<Float32Array> {
+  return new Promise(resolve => {
+    const args = ['-hide_banner', '-v', 'error', ...(from ? ['-ss', String(from)] : []), ...(len ? ['-t', String(len)] : []), '-i', path, '-vn', '-ac', '1', '-ar', String(sr), '-f', 'f32le', '-'];
+    const child = spawn(FFMPEG, args, { windowsHide: true });
+    const chunks: Buffer[] = [];
+    child.stdout.on('data', d => chunks.push(d));
+    child.on('close', () => {
+      const buf = Buffer.concat(chunks);
+      resolve(new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + Math.floor(buf.length / 4) * 4)));
+    });
+    child.on('error', () => resolve(new Float32Array(0)));
+  });
+}

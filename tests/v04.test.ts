@@ -11,6 +11,7 @@ import { keysOf, removeKey, setKeyAt, valueAt } from '../shared/keyframes';
 import { layoutProject, makeMediaClip, newProject, transformAt } from '../shared/timeline';
 import { buildExportArgs } from '../shared/export-graph';
 import type { MediaItem } from '../shared/types';
+import { dropPhantoms, levels } from '../shared/speech';
 
 test('панели: по умолчанию и после «поменять стороны» как в 0.3', () => {
   const L = defaultLayout();
@@ -121,4 +122,37 @@ test('ключевые кадры в экспорте: положение и п�
   const f2 = frame(2.5);
   const v = f2[90 * 320 + 256];
   assert.ok(v > 90 && v < 165, `яркость ${v}`);
+});
+
+test('распознавание: текст в тишине и «Продолжение следует» отбрасываются, настоящая речь остаётся', () => {
+  const sr = 8000;
+  const x = new Float32Array(sr * 12);
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 - 0.5; };
+  for (let i = 0; i < x.length; i++) {
+    const t = i / sr;
+    // голос 0–4 с и 10–12 с (слоги по 0.25 с), между ними почти тишина
+    const speaking = t < 4 || t >= 10;
+    const syllable = 0.5 + 0.5 * Math.sin(2 * Math.PI * 4 * t);
+    x[i] = speaking ? 0.3 * syllable * Math.sin(2 * Math.PI * 180 * t) + rnd() * 0.02 : rnd() * 0.0005;
+  }
+  const db = levels(x, sr, 20);
+  const segs = [
+    { start: 0.2, end: 3.8, text: 'Привет, сегодня покажу монтаж.' },
+    { start: 4.5, end: 8.5, text: 'Продолжение следует...' },
+    { start: 5, end: 9.5, text: 'Какой-то текст из ниоткуда' },
+    { start: 10, end: 11.9, text: 'Спасибо за просмотр!' },
+  ];
+  const kept = dropPhantoms(segs, db, 20).map(s => s.text);
+  assert.deepEqual(kept, ['Привет, сегодня покажу монтаж.', 'Спасибо за просмотр!']);
+  // оценки сервиса: «тут тишина» и зацикливание
+  const svc = dropPhantoms([
+    { start: 0, end: 2, text: 'нормально', noSpeech: 0.1, logprob: -0.3 },
+    { start: 2, end: 3, text: 'выдумка', noSpeech: 0.9, logprob: -1.4 },
+    { start: 3, end: 4, text: 'ля ля ля ля ля ля ля ля', compression: 3.1 },
+  ]);
+  assert.deepEqual(svc.map(s => s.text), ['нормально']);
+  // один и тот же длинный кусок подряд много раз — остаётся два
+  const rep = dropPhantoms(Array.from({ length: 5 }, (_, i) => ({ start: i, end: i + 1, text: 'и снова то же самое' })));
+  assert.equal(rep.length, 2);
 });

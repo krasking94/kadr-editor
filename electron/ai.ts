@@ -7,7 +7,8 @@ import { ANTHROPIC_FALLBACK_MODELS, providerPreset } from '../shared/providers';
 import { getSecret, getSettings } from './settings';
 import { callEditor, notify, type ToolOutput } from './bridge';
 import { externalTools } from './mcp';
-import { punctuate } from '../shared/speech';
+import { dropPhantoms, levels, punctuate } from '../shared/speech';
+import { pcm } from './ffmpeg';
 
 interface Session {
   provider: string;
@@ -249,6 +250,8 @@ export async function complete(system: string, user: string): Promise<string> {
   }
 }
 
+const num = (v: unknown) => (typeof v === 'number' && isFinite(v) ? v : undefined);
+
 export interface Segment { start: number; end: number; text: string; words?: { s: number; e: number; w: string }[] }
 
 // Подсказка для Whisper: с ней он не выбрасывает «эээ» и «ммм» из расшифровки
@@ -278,10 +281,16 @@ export async function transcribeFile(path: string, language?: string, fillers = 
     ? data.words.map((w: any) => ({ s: Number(w.start), e: Number(w.end), w: String(w.word ?? w.text ?? '').trim() })).filter((w: any) => w.w && isFinite(w.s))
     : [];
   if (Array.isArray(data.segments)) {
-    const segs: Segment[] = data.segments.map((x: any) => ({ start: Number(x.start), end: Number(x.end), text: String(x.text).trim() })).filter((x: Segment) => x.text);
+    const raw = data.segments.map((x: any) => ({
+      start: Number(x.start), end: Number(x.end), text: String(x.text).trim(),
+      noSpeech: num(x.no_speech_prob), logprob: num(x.avg_logprob), compression: num(x.compression_ratio),
+    }));
+    // убираем фразы, сказанные «тишиной»: проверяем громкость там, где сервис услышал слова
+    const db = levels(await pcm(path, 8000), 8000, 20);
+    const segs: Segment[] = dropPhantoms(raw, db, 20).map(({ start, end, text }) => ({ start, end, text }));
     if (words.length) for (const seg of segs) seg.words = punctuate(words.filter(w => w.s >= seg.start - 0.05 && w.s < seg.end - 0.01), seg.text);
     return segs;
   }
-  if (data.text) return [{ start: 0, end: Number(data.duration || 5), text: String(data.text).trim() }];
+  if (data.text) return dropPhantoms([{ start: 0, end: Number(data.duration || 5), text: String(data.text).trim() }], levels(await pcm(path, 8000), 8000, 20), 20);
   return [];
 }

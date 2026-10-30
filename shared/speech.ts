@@ -99,3 +99,75 @@ export function punctuate<T extends { w: string }>(words: T[], text: string): T[
     return w;
   });
 }
+
+// ── Защита от «выдуманного» текста ──────────────────────────────────────────────
+// Whisper в тишине или под музыку иногда пишет то, чего никто не говорил:
+// «Продолжение следует…», «Субтитры сделал …», «Спасибо за просмотр». Отсекаем такие фразы
+// по громкости звука (нет голоса — нет текста) и по оценкам самого сервиса.
+
+export interface GuardSegment {
+  start: number;
+  end: number;
+  text: string;
+  noSpeech?: number; // вероятность, что речи нет (no_speech_prob)
+  logprob?: number; // средняя уверенность (avg_logprob)
+  compression?: number; // насколько текст повторяется (compression_ratio)
+}
+
+const PHANTOMS = [
+  'продолжение следует', 'субтитры сделал', 'субтитры создавал', 'субтитры подогнал', 'редактор субтитров', 'корректор',
+  'спасибо за просмотр', 'спасибо за внимание', 'подписывайтесь на канал', 'ставьте лайки', 'до новых встреч', 'всем пока',
+  'thank you for watching', 'thanks for watching', 'subtitles by', 'please subscribe', 'amara org', 'dimatorzok',
+];
+
+const plain = (s: string) => s.toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\s+/g, ' ').trim();
+
+/** Громкость звука по кадрам в децибелах (кадр = 1/fps секунды) */
+export function levels(x: Float32Array, sr: number, fps = 20): number[] {
+  const hop = Math.max(1, Math.round(sr / fps));
+  const out: number[] = [];
+  for (let i = 0; i + hop <= x.length; i += hop) {
+    let s = 0;
+    for (let j = i; j < i + hop; j++) s += x[j] * x[j];
+    out.push(10 * Math.log10(1e-10 + s / hop));
+  }
+  return out;
+}
+
+/** Доля кадров отрезка, где слышен голос (громче фона) */
+export function voicedShare(db: number[], fps: number, start: number, end: number): number {
+  if (!db.length) return 1;
+  const sorted = [...db].sort((a, b) => a - b);
+  const floor = sorted[Math.floor(sorted.length * 0.15)];
+  const peak = sorted[Math.floor(sorted.length * 0.97)];
+  const gate = Math.max(-55, floor + 8, peak - 38);
+  const a = Math.max(0, Math.floor(start * fps)), b = Math.min(db.length, Math.ceil(end * fps));
+  if (b <= a) return 0;
+  let n = 0;
+  for (let i = a; i < b; i++) if (db[i] > gate) n++;
+  return n / (b - a);
+}
+
+/** Убирает фразы, которых, скорее всего, не говорили. db — громкость по кадрам (или пусто, если неизвестна) */
+export function dropPhantoms<T extends GuardSegment>(segs: T[], db: number[] = [], fps = 20): T[] {
+  const out: T[] = [];
+  let repeat = 0;
+  for (const s of segs) {
+    const t = plain(s.text);
+    if (!t) continue;
+    const voiced = voicedShare(db, fps, s.start, s.end);
+    // нет голоса — нет текста
+    if (db.length && voiced < 0.08) continue;
+    // сервис сам считает, что тут тишина, и сомневается в словах
+    if ((s.noSpeech ?? 0) > 0.6 && (s.logprob ?? 0) < -1) continue;
+    // зацикливание: один и тот же кусок много раз подряд
+    if ((s.compression ?? 0) > 2.4) continue;
+    // известные «фантомы» — если вокруг тихо или сервис не уверен
+    if (PHANTOMS.some(p => t.includes(p)) && (voiced < 0.35 || (s.noSpeech ?? 0) > 0.3 || (s.logprob ?? 0) < -0.7)) continue;
+    const prev = out[out.length - 1];
+    repeat = prev && plain(prev.text) === t && t.length > 8 ? repeat + 1 : 0;
+    if (repeat >= 2) continue;
+    out.push(s);
+  }
+  return out;
+}
