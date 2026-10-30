@@ -228,7 +228,8 @@ export function buildExportArgs(
     if (m.kind === 'image') {
       return addInput(['-loop', '1', '-framerate', String(fps), '-t', n(clipDuration(c) + 0.1), '-i', m.path]);
     }
-    return addInput(['-ss', n(c.in), '-t', n(len), '-i', m.path]);
+    // видео с прозрачным фоном: альфа-канал VP9 читает только декодер libvpx
+    return addInput([...(m.alpha ? ['-c:v', 'libvpx-vp9'] : []), '-ss', n(c.in), '-t', n(len), '-i', m.path]);
   };
 
   // ── Видео: главная дорожка ─────────────────────────────

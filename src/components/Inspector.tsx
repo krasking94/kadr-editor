@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import {
   AlignCenter, AlignLeft, AlignRight, AudioLines, Bold, CaseUpper, Clapperboard, Film, Gauge, Image as ImageIcon, Italic, Lightbulb,
   Move, Music, Palette, RotateCcw, Scissors, SlidersHorizontal, Snowflake, Sparkles, Trash2, Type, Volume2, Blend,
-  Vibrate, Rewind, Undo2, ScanFace, Pipette, FileImage, Mic2, Headphones, Highlighter, Diamond, ChevronLeft, ChevronRight, X,
+  Vibrate, Rewind, Undo2, ScanFace, Pipette, FileImage, Mic2, Headphones, Highlighter, Diamond, ChevronLeft, ChevronRight, X, UserRoundX,
 } from 'lucide-react';
 import { mediaUrl } from '../api';
 import type { MediaClip, MediaItem, TextAnim, TextClip, TransitionType } from '../../shared/types';
@@ -398,7 +398,7 @@ function KeysSection({ clip, up }: { clip: MediaClip; up: Up }) {
 
 function ProcessSection({ clip }: { clip: MediaClip }) {
   const tasks = useStore(s => s.tasks);
-  const busy = tasks.some(t => t.label === 'Убираю тряску' || t.label === 'Переворачиваю видео');
+  const busy = tasks.some(t => t.label === 'Убираю тряску' || t.label === 'Переворачиваю видео' || t.label === 'Убираю фон');
   const done = clip.origin?.done || [];
   return (
     <div className="insp-section">
@@ -406,10 +406,11 @@ function ProcessSection({ clip }: { clip: MediaClip }) {
       <div className="row wrap">
         <button className="btn small" disabled={busy} data-tip="Видео снимали с рук? Программа сгладит дрожание камеры. Занимает примерно столько же, сколько длится клип." onClick={() => S.processClip(clip.id, 'stabilize').catch(() => undefined)}><Vibrate size={13} /> {done.includes('stabilize') ? 'Сгладить ещё' : 'Убрать тряску'}</button>
         <button className="btn small" disabled={busy} data-tip="Клип проиграется с конца в начало, вместе со звуком" onClick={() => S.processClip(clip.id, 'reverse').catch(() => undefined)}><Rewind size={13} /> {done.includes('reverse') ? 'Снова вперёд' : 'Задом наперёд'}</button>
+        {!done.includes('nobg') && <button className="btn small" disabled={busy} data-tip={'Нейросеть прямо на компьютере найдёт человека в кадре и сделает фон прозрачным — без зелёного экрана и без интернета.\nЛучше всего работает, когда в кадре один-два человека.'} onClick={() => S.removeBackground(clip.id).catch(() => undefined)}><UserRoundX size={13} /> Убрать фон</button>}
       </div>
       {clip.origin && (
         <div className="row wrap" style={{ gap: 6 }}>
-          <span className="small-text muted">Сейчас: {done.length ? done.map(d => (d === 'stabilize' ? 'без тряски' : 'задом наперёд')).join(', ') : 'обработанная копия'}</span>
+          <span className="small-text muted">Сейчас: {done.length ? done.map(d => (d === 'stabilize' ? 'без тряски' : d === 'nobg' ? 'без фона' : 'задом наперёд')).join(', ') : 'обработанная копия'}</span>
           <button className="btn small ghost" onClick={() => S.restoreOriginal(clip.id)}><Undo2 size={13} /> Вернуть оригинал</button>
         </div>
       )}

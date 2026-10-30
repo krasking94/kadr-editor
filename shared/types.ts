@@ -18,7 +18,8 @@ export interface MediaItem {
   waveform?: number[]; // пики 0..1
   missing?: boolean;
   transcript?: Transcript; // распознанная речь всего файла (время слов — от начала файла)
-  proxy?: string; // лёгкая копия для плавного просмотра; сохранение всегда идёт из оригинала
+  proxy?: string;
+  alpha?: boolean; // у видео прозрачный фон (WebM VP9 с альфа-каналом) // лёгкая копия для плавного просмотра; сохранение всегда идёт из оригинала
 }
 
 export interface Transcript {
@@ -120,7 +121,7 @@ export interface ClipOrigin {
   mediaId: string;
   in: number;
   out: number;
-  done: ('stabilize' | 'reverse')[];
+  done: ('stabilize' | 'reverse' | 'nobg')[];
 }
 
 export interface Word {

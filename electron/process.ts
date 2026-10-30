@@ -3,7 +3,7 @@
 // Здесь же короткий звуковой отрывок «до/после» и измерение громкости.
 import { app } from 'electron';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Project } from '../shared/types';
@@ -150,4 +150,94 @@ export async function makeProxy(jobId: string, src: string, duration: number, on
     jobs.delete(jobId);
     if (existsSync(tmpOut)) rmSync(tmpOut, { force: true });
   }
+}
+
+// ── Удаление фона без зелёного экрана ───────────────────────────────────────────
+// 1) FFmpeg раскладывает отрезок на маленькие кадры; 2) окно программы находит на каждом человека
+// (нейросеть MediaPipe прямо на компьютере) и присылает маски; 3) FFmpeg собирает видео
+// с прозрачным фоном (WebM VP9 с альфа-каналом): его видно в просмотре и можно положить на любой фон.
+
+interface BgJob { src: string; from: number; len: number; fps: number; w: number; h: number; mw: number; mh: number; frames: number; dir: string; out: string; ctrl: AbortController }
+const bgJobs = new Map<string, BgJob>();
+
+export async function bgPrepare(jobId: string, src: string, from: number, to: number, srcW: number, srcH: number, srcFps: number): Promise<{ frames: number; mw: number; mh: number; fps: number; done?: string }> {
+  let mtime = 0;
+  try { mtime = statSync(src).mtimeMs; } catch { throw new Error('Исходный файл не найден'); }
+  const len = Math.max(0.1, to - from);
+  if (len > 600) throw new Error('Фон можно убрать у отрезка до 10 минут. Разрежьте клип на части.');
+  const h = createHash('sha1').update(['nobg2', src, mtime, fmt(from), fmt(to)].join('|')).digest('hex').slice(0, 12);
+  const name = src.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, '');
+  const out = join(outDir(), `${name} — без фона ${h}.webm`);
+  const fps = Math.max(10, Math.min(30, Math.round(srcFps || 30)));
+  // маска считается в маленьком размере: так быстро, а края сглаживаются при увеличении
+  const mw = 256, mh = Math.max(2, Math.round((256 * srcH) / Math.max(1, srcW) / 2) * 2);
+  if (existsSync(out)) return { frames: 0, mw, mh, fps, done: out };
+  const scale = Math.min(1, 1920 / Math.max(srcW, srcH));
+  const w = Math.max(2, Math.round((srcW * scale) / 2) * 2), hh = Math.max(2, Math.round((srcH * scale) / 2) * 2);
+  const dir = join(tmpdir(), 'kadr', 'nobg_' + h);
+  mkdirSync(dir, { recursive: true });
+  const ctrl = new AbortController();
+  jobs.set(jobId, ctrl);
+  const r = await run(FFMPEG, ['-hide_banner', '-y', '-nostdin', '-ss', fmt(from), '-t', fmt(len), '-i', src, '-an', '-vf', `fps=${fps},scale=${mw}:${mh}:flags=area`, '-pix_fmt', 'rgba', '-f', 'rawvideo', join(dir, 'frames.raw')], { signal: ctrl.signal });
+  if (r.code !== 0) {
+    jobs.delete(jobId);
+    rmSync(dir, { recursive: true, force: true });
+    throw new Error(ctrl.signal.aborted ? 'Отменено' : 'FFmpeg: ' + r.stderr.trim().split('\n').slice(-2).join(' ').slice(0, 400));
+  }
+  const frames = Math.floor(statSync(join(dir, 'frames.raw')).size / (mw * mh * 4));
+  writeFileSync(join(dir, 'masks.raw'), '');
+  bgJobs.set(jobId, { src, from, len, fps, w, h: hh, mw, mh, frames, dir, out, ctrl });
+  return { frames, mw, mh, fps };
+}
+
+/** Кусок кадров для нейросети: count кадров начиная с start (RGBA подряд) */
+export function bgFrames(jobId: string, start: number, count: number): Uint8Array {
+  const j = bgJobs.get(jobId);
+  if (!j) throw new Error('Задача не найдена');
+  const size = j.mw * j.mh * 4;
+  const n = Math.max(0, Math.min(count, j.frames - start));
+  const buf = Buffer.alloc(n * size);
+  const fd = openSync(join(j.dir, 'frames.raw'), 'r');
+  try { readSync(fd, buf, 0, buf.length, start * size); } finally { closeSync(fd); }
+  return buf;
+}
+
+export function bgWrite(jobId: string, masks: Uint8Array) {
+  const j = bgJobs.get(jobId);
+  if (!j) throw new Error('Задача не найдена');
+  appendFileSync(join(j.dir, 'masks.raw'), masks);
+}
+
+export async function bgFinish(jobId: string, onProgress: (p: number) => void): Promise<string> {
+  const j = bgJobs.get(jobId);
+  if (!j) throw new Error('Задача не найдена');
+  const tmpOut = j.out + '.part.webm';
+  try {
+    // маску увеличиваем, слегка размываем и делаем край чуть жёстче, чтобы не было ореола
+    const graph = [
+      `[0:v]fps=${j.fps},scale=${j.w}:${j.h},format=yuva420p[v]`,
+      `[1:v]scale=${j.w}:${j.h}:flags=bicubic,gblur=sigma=1.5,lutyuv=y='clip((val-70)*1.45,0,255)',format=gray[m]`,
+      '[v][m]alphamerge,format=yuva420p[o]',
+    ].join(';');
+    const r = await run(FFMPEG, ['-hide_banner', '-y', '-nostdin', '-progress', 'pipe:1', '-nostats',
+      '-ss', fmt(j.from), '-t', fmt(j.len), '-i', j.src,
+      '-f', 'rawvideo', '-pix_fmt', 'gray', '-s', `${j.mw}x${j.mh}`, '-r', String(j.fps), '-i', join(j.dir, 'masks.raw'),
+      '-filter_complex', graph, '-map', '[o]', '-map', '0:a?',
+      '-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-b:v', '0', '-crf', '32', '-deadline', 'good', '-cpu-used', '5', '-row-mt', '1', '-auto-alt-ref', '0',
+      '-c:a', 'libopus', '-b:a', '160k', '-shortest', tmpOut], { signal: j.ctrl.signal, onStdout: progressOf(j.len, onProgress) });
+    if (r.code !== 0) throw new Error(j.ctrl.signal.aborted ? 'Отменено' : 'FFmpeg: ' + r.stderr.trim().split('\n').slice(-2).join(' ').slice(0, 400));
+    renameSync(tmpOut, j.out);
+    return j.out;
+  } finally {
+    bgCleanup(jobId);
+    if (existsSync(tmpOut)) rmSync(tmpOut, { force: true });
+  }
+}
+
+export function bgCleanup(jobId: string) {
+  const j = bgJobs.get(jobId);
+  jobs.delete(jobId);
+  if (!j) return;
+  bgJobs.delete(jobId);
+  rmSync(j.dir, { recursive: true, force: true });
 }

@@ -11,7 +11,7 @@ import { FFMPEG, ffmpegAvailable, probe, thumbnails, waveform, detectSilence, de
 import { getSettings, setSettings, setSecret, secretStatus } from './settings';
 import { attachWindow, notify } from './bridge';
 import { chat, complete, listModels, resetSession, stopAi, transcribeFile } from './ai';
-import { audioSnippet, cancelProcess, makeProxy, measureLoudness, processClip, type ProcessKind } from './process';
+import { audioSnippet, bgCleanup, bgFinish, bgFrames, bgPrepare, bgWrite, cancelProcess, makeProxy, measureLoudness, processClip, type ProcessKind } from './process';
 import { detectBeats } from '../shared/beats';
 import { estimateWords } from '../shared/speech';
 import { checkForUpdates, downloadUpdate, installUpdate, updateState } from './updater';
@@ -504,6 +504,12 @@ ipcMain.handle('ai:complete', (_e, system: string, user: string) => complete(sys
 ipcMain.handle('media:process', (_e, jobId: string, kind: ProcessKind, path: string, from: number, to: number) =>
   processClip(jobId, kind, path, from, to, p => notify('media:process-progress', { jobId, progress: p })));
 ipcMain.handle('media:process-cancel', (_e, jobId: string) => cancelProcess(jobId));
+// Удаление фона: подготовка кадров, обмен кадрами и масками с окном программы, сборка видео
+ipcMain.handle('nobg:prepare', (_e, jobId: string, path: string, from: number, to: number, w: number, h: number, fps: number) => bgPrepare(jobId, path, from, to, w, h, fps));
+ipcMain.handle('nobg:frames', (_e, jobId: string, start: number, count: number) => bgFrames(jobId, start, count));
+ipcMain.handle('nobg:write', (_e, jobId: string, masks: Uint8Array) => bgWrite(jobId, masks));
+ipcMain.handle('nobg:finish', (_e, jobId: string) => bgFinish(jobId, p => notify('media:process-progress', { jobId, progress: p })));
+ipcMain.handle('nobg:cancel', (_e, jobId: string) => { cancelProcess(jobId); bgCleanup(jobId); });
 ipcMain.handle('audio:snippet', (_e, project: Project, start: number, end: number) => audioSnippet(project, start, end));
 ipcMain.handle('audio:loudness', (_e, project: Project) => measureLoudness(project));
 ipcMain.handle('screen:sources', async () => {

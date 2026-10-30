@@ -156,3 +156,29 @@ test('распознавание: текст в тишине и «Продолж
   const rep = dropPhantoms(Array.from({ length: 5 }, (_, i) => ({ start: i, end: i + 1, text: 'и снова то же самое' })));
   assert.equal(rep.length, 2);
 });
+
+test('видео с прозрачным фоном (WebM VP9 + альфа) в экспорте пропускает нижний слой', { skip: !hasFF }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'kadr-v04a-'));
+  const bg = join(dir, 'bg.png'), fg = join(dir, 'fg.webm'), out = join(dir, 'out.mp4');
+  spawnSync(ff, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=320x180', '-frames:v', '1', bg]);
+  // белый квадрат посередине, остальное прозрачное
+  const r0 = spawnSync(ff, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', "color=c=white:s=320x180:d=2,format=rgba,geq=r=255:g=255:b=255:a='255*between(X,120,199)*between(Y,50,129)'",
+    '-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-auto-alt-ref', '0', fg]);
+  assert.equal(r0.status, 0, r0.stderr.toString());
+  const p = newProject('a', 320, 180, 30);
+  const mb: MediaItem = { ...media(), id: 'b', path: bg, width: 320, height: 180 };
+  const mf: MediaItem = { id: 'f', path: fg, name: 'f', kind: 'video', duration: 2, width: 320, height: 180, hasAudio: false, fps: 25, size: 1, alpha: true };
+  p.media.push(mb, mf);
+  p.tracks[0].clips.push(makeMediaClip(mb, { out: 2 }));
+  p.tracks[1].clips.push(makeMediaClip(mf, { out: 2 }));
+  layoutProject(p);
+  const plan = buildExportArgs(p, [], { outPath: out, format: 'mp4', width: 320, height: 180, fps: 30, quality: 'best', encoder: 'cpu' });
+  const r = spawnSync(ff, plan.args, { maxBuffer: 1 << 26 });
+  assert.equal(r.status, 0, r.stderr.toString().slice(-2000));
+  const g = spawnSync(ff, ['-loglevel', 'error', '-ss', '1', '-i', out, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']).stdout as Buffer;
+  const px = (x: number, y: number) => [...g.subarray((y * 320 + x) * 3, (y * 320 + x) * 3 + 3)];
+  const [r1, g1] = px(20, 20);
+  assert.ok(r1 > 180 && g1 < 80, `по краям виден красный фон: ${px(20, 20)}`);
+  const c = px(160, 90);
+  assert.ok(c.every(v => v > 200), `в центре белый квадрат: ${c}`);
+});

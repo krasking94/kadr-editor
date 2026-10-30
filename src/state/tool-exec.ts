@@ -155,6 +155,9 @@ export async function execTool(name: string, a: any, source: string): Promise<To
     case 'reverse_clip':
       await S.processClip(a.clip_id, name === 'stabilize_clip' ? 'stabilize' : 'reverse', source);
       return ok(name === 'stabilize_clip' ? 'Stabilized' : 'Reversed');
+    case 'remove_background':
+      await S.removeBackground(a.clip_id, source);
+      return ok('Background removed');
     case 'auto_reframe': {
       const r = await S.autoReframe({ width: a.width, height: a.height, source });
       return ok(`Reframed ${r.clips} clips, face found in ${r.faces}`);

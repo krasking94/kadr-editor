@@ -8,7 +8,7 @@ type Detector = { detect: (img: HTMLCanvasElement) => { detections: { boundingBo
 let detectorPromise: Promise<Detector> | null = null;
 
 // Файлы движка лежат рядом с программой; при разработке их отдаёт сервер Vite
-function assetUrl(rel: string): string {
+export function assetUrl(rel: string): string {
   if (location.protocol.startsWith('http')) return new URL('./' + rel, location.href).href;
   const dir = get().info?.assetsDir || '';
   const sep = dir.includes('\\') ? '\\' : '/';

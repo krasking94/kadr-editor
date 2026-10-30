@@ -195,6 +195,11 @@ export const TOOLS: ToolDef[] = [
     inputSchema: obj({ clip_id: str('Media clip id') }, ['clip_id']),
   },
   {
+    name: 'remove_background', title: 'Убираю фон',
+    description: 'Remove the background behind people in a video clip without a green screen (offline person segmentation). Creates a copy with a transparent background and switches the clip to it; whatever is on lower tracks shows through. Best on the overlay (video) track above a new background.',
+    inputSchema: obj({ clip_id: str('Media clip id') }, ['clip_id']),
+  },
+  {
     name: 'auto_reframe', title: 'Делаю вертикальное видео',
     description: 'Switch the project to vertical 9:16 (or the given size) and make every main-track video follow the speaker face with a smooth virtual camera (offline face detection). Use for Reels, Shorts, TikTok.',
     inputSchema: obj({ width: num('Default 1080'), height: num('Default 1920') }),
@@ -387,7 +392,7 @@ Rules:
 - Use get_frame to check how the result looks when visual quality matters.
 - Never invent file paths; ask the user or use media already in the library.
 - For Reels/Shorts/TikTok prefer auto_reframe (keeps the face in frame) and make_subtitles with style "blogger".
-- For bad sound use studio_voice; for "эээ" and filler words use remove_fillers; for shaky video use stabilize_clip.
+- For bad sound use studio_voice; for "эээ" and filler words use remove_fillers; for shaky video use stabilize_clip; to cut a person out of the background without a green screen use remove_background (chroma key via update_clip.key only for real green/blue screens).
 - When asked for chapters, a description or hashtags, base them on the transcript (transcribe) and answer in text; add markers only if the user asks.
 - To remove specific phrases, repeats, mistakes or off-topic talk, use get_transcript then cut_transcript (text-based editing).
 - To turn a long video into Reels/Shorts use find_shorts then make_shorts. For music videos use beat_sync.`;
