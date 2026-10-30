@@ -707,6 +707,30 @@ export async function exportVideo(opts: ExportOptions, source?: string, snap?: {
   }
 }
 
+// ── Обновление программы ──
+export async function installUpdateNow() {
+  if (get().exportQueue.some(q => q.state === 'run' || q.state === 'wait') || get().tasks.some(t => t.label.startsWith('Сохраняю видео'))) {
+    toast('info', 'Сначала дождитесь, пока сохранится видео', { detail: 'Обновление установится само, когда вы закроете программу.' });
+    return;
+  }
+  if (await confirmDiscard()) api.updateInstall();
+}
+
+let updateShown = '';
+export function watchUpdates(): () => void {
+  return api.onUpdateState((u: { status: string; version?: string }) => {
+    const key = u.status + u.version;
+    if (updateShown === key) return;
+    if (u.status === 'available') {
+      updateShown = key;
+      toast('info', `Вышла новая версия «Кадра» — ${u.version}`, { ttl: 20000, detail: 'Скачается в фоне, работе не мешает.', action: { label: 'Скачать', run: () => api.updateDownload() } });
+    } else if (u.status === 'ready') {
+      updateShown = key;
+      toast('success', `Обновление ${u.version} готово`, { ttl: 30000, detail: 'Установится при перезапуске или когда вы закроете программу.', action: { label: 'Перезапустить', run: () => installUpdateNow() } });
+    }
+  });
+}
+
 // ── Очередь сохранения: ролик запоминается таким, какой он сейчас, и сохраняется по очереди ──
 const queued = new Map<string, { opts: ExportOptions; project: Project; texts: Awaited<ReturnType<typeof textRenders>> }>();
 let pumping = false;

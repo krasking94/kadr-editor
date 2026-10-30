@@ -8,6 +8,7 @@ import type { McpClientConfig } from '../../shared/settings';
 import { uid } from '../../shared/timeline';
 import { set, toast, useStore } from '../state/store';
 import { saveSecret, saveSettings } from '../state/settings-actions';
+import { installUpdateNow } from '../state/actions';
 import { Modal, Segmented, Slider, Switch } from './ui';
 import { ShortcutsList } from './ShortcutsDialog';
 import { Logo } from './Logo';
@@ -405,6 +406,41 @@ function ExportSettings() {
   );
 }
 
+type UpdState = { status: string; version?: string; progress?: number; error?: string; notes?: string };
+
+function UpdateCard() {
+  const s = useStore(st => st.settings);
+  const [u, setU] = useState<UpdState>({ status: 'idle' });
+  useEffect(() => {
+    api.updateState().then(setU).catch(() => undefined);
+    return api.onUpdateState(setU);
+  }, []);
+  const text: Record<string, string> = {
+    idle: 'Нажмите, чтобы проверить, не вышла ли новая версия.',
+    checking: 'Проверяю…',
+    none: 'У вас последняя версия.',
+    available: `Вышла версия ${u.version}. Скачать её?`,
+    downloading: `Скачиваю обновление… ${Math.round((u.progress || 0) * 100)}%`,
+    ready: `Версия ${u.version} скачана. Она установится при перезапуске.`,
+    error: `Не удалось проверить: ${u.error || 'нет связи'}`,
+    unsupported: 'Обновление само работает в установленной версии. Версию из архива ZIP обновляйте вручную со страницы проекта.',
+  };
+  return (
+    <div className="card">
+      <div className="row"><RefreshCw size={16} color="var(--accent)" /><b>Обновления</b></div>
+      <div className="small-text">{text[u.status] || ''}</div>
+      {u.status === 'downloading' && <div className="progress" style={{ width: '100%' }}><div style={{ width: `${(u.progress || 0) * 100}%` }} /></div>}
+      {u.notes && (u.status === 'available' || u.status === 'ready') && <div className="small-text muted" style={{ whiteSpace: 'pre-wrap', maxHeight: 120, overflowY: 'auto' }}>{u.notes}</div>}
+      <div className="row wrap">
+        {(u.status === 'idle' || u.status === 'none' || u.status === 'error') && <button className="btn" onClick={() => api.updateCheck().then(setU)}><RefreshCw size={14} /> Проверить обновления</button>}
+        {u.status === 'available' && <button className="btn primary" onClick={() => api.updateDownload()}>Скачать</button>}
+        {u.status === 'ready' && <button className="btn primary" onClick={() => installUpdateNow()}>Перезапустить и обновить</button>}
+      </div>
+      <Switch label="Проверять обновления при запуске" checked={s.autoUpdate} onChange={v => saveSettings({ autoUpdate: v })} />
+    </div>
+  );
+}
+
 function About() {
   const info = useStore(st => st.info);
   return (
@@ -422,6 +458,7 @@ function About() {
         <button className="btn" onClick={() => api.openExternal('https://github.com/krasking94/kadr-editor/issues/new')}>Сообщить об ошибке</button>
         <button className="btn ghost" onClick={() => info && api.openPath(info.userData)}>Папка настроек</button>
       </div>
+      <UpdateCard />
       <div className="card small-text muted" style={{ lineHeight: 1.6 }}>
         Внутри: Electron, React, FFmpeg (лицензия LGPL/GPL, поставляется отдельной программой), шрифты Onest, Montserrat, Rubik, Unbounded, Oswald, Russo One, Comfortaa, PT Serif, Caveat, Lobster, Press Start 2P, JetBrains Mono (лицензия SIL OFL), иконки Lucide.
       </div>

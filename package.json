@@ -1,7 +1,7 @@
 {
   "name": "kadr",
   "productName": "Kadr",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Кадр — простой и красивый видеоредактор с ИИ-помощником",
   "author": {
     "name": "Максим (krasking94)"
@@ -50,6 +50,13 @@
     "productName": "Kadr",
     "executableName": "Kadr",
     "copyright": "© 2026 Максим (krasking94). Лицензия MIT.",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "krasking94",
+        "repo": "kadr-editor"
+      }
+    ],
     "directories": {
       "output": "release",
       "buildResources": "build"

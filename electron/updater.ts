@@ -1,6 +1,8 @@
 // Автообновление: «Кадр» сам узнаёт о новой версии на GitHub, скачивает её по согласию пользователя
 // и ставит при перезапуске. Работает в установленной версии (Kadr-Setup), не в архиве ZIP.
 import { app } from 'electron';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { autoUpdater } from 'electron-updater';
 import { notify } from './bridge';
 
@@ -26,7 +28,8 @@ function wire() {
 }
 
 // Обновление возможно только в установленной программе (у ZIP-версии и при разработке его нет)
-const supported = () => app.isPackaged && process.platform === 'win32' && !process.env.PORTABLE_EXECUTABLE_DIR;
+// установщик кладёт рядом с программой «Uninstall Kadr.exe», у распакованного архива его нет
+const supported = () => app.isPackaged && process.platform === 'win32' && existsSync(join(dirname(process.execPath), 'Uninstall Kadr.exe'));
 
 export async function checkForUpdates(): Promise<typeof state> {
   if (!supported()) { send({ status: 'unsupported' }); return state; }
