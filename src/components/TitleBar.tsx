@@ -12,7 +12,8 @@ const MENUS: { label: string; groups: Command['group'][] }[] = [
   { label: 'Правка', groups: ['Правка', 'Клип'] },
   { label: 'Вид', groups: ['Просмотр', 'Таймлайн'] },
   { label: 'ИИ', groups: ['ИИ'] },
-  { label: 'Помощь', groups: ['Окно', 'Помощь'] },
+  { label: 'Окно', groups: ['Окно'] },
+  { label: 'Помощь', groups: ['Помощь'] },
 ];
 
 function menuItems(groups: Command['group'][]): MenuItem[] {

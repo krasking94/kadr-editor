@@ -6,10 +6,11 @@ import * as A from '../state/actions';
 import * as S from '../state/smart';
 import { get, redo, set, toast, undo } from '../state/store';
 import { askAssistant } from '../state/assistant';
-import { layoutOf, saveLayout, saveSettings } from '../state/settings-actions';
+import { floatPane, layoutOf, saveLayout, saveSettings } from '../state/settings-actions';
 import * as SC from '../state/script';
 import * as MT from '../state/media-tools';
 import { defaultLayout } from '../../shared/settings';
+import { mirror } from '../../shared/layout';
 
 export interface Command {
   id: string;
@@ -145,8 +146,11 @@ export const COMMANDS: Command[] = [
   { id: 'settings', label: 'Настройки', group: 'Окно', keys: ['Ctrl+,'], run: () => set({ dialog: 'settings', settingsTab: 'general' }) },
   { id: 'ai-settings', label: 'Подключить нейросеть', group: 'Окно', run: () => set({ dialog: 'settings', settingsTab: 'ai' }) },
   { id: 'mcp-settings', label: 'Подключение внешнего ИИ (MCP)', group: 'Окно', run: () => set({ dialog: 'settings', settingsTab: 'mcp' }) },
-  { id: 'swap-panels', label: 'Поменять панели местами (файлы слева / справа)', group: 'Окно', run: () => { saveLayout({ swap: !layoutOf(get().settings).swap }); } },
-  { id: 'reset-panels', label: 'Вернуть панели как было', group: 'Окно', run: () => { saveSettings({ layout: defaultLayout() }); } },
+  { id: 'swap-panels', label: 'Поменять панели местами (файлы слева / справа)', group: 'Окно', run: () => { saveLayout(mirror(layoutOf(get().settings))); } },
+  { id: 'float-inspector', label: 'Отдельное окно: настройки клипа', group: 'Окно', run: () => floatPane('inspector') },
+  { id: 'float-assistant', label: 'Отдельное окно: ИИ-помощник', group: 'Окно', run: () => { set({ assistantOpen: true }); floatPane('assistant'); } },
+  { id: 'float-files', label: 'Отдельное окно: медиатека и заготовки', group: 'Окно', run: () => floatPane('files') },
+  { id: 'reset-panels', label: 'Вернуть окна как было', group: 'Окно', run: () => { saveSettings({ layout: defaultLayout() }); } },
   { id: 'theme', label: 'Сменить тему (тёмная / светлая)', group: 'Окно', run: () => {
     saveSettings({ theme: document.documentElement.dataset.theme === 'light' ? 'dark' : 'light' });
   } },
