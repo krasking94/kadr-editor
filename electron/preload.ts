@@ -68,6 +68,9 @@ const api = {
 
   mcpStatus: call('mcp:status'),
   mcpRestart: call('mcp:restart'),
+  mcpDesktopStatus: call('mcp:desktop-status'),
+  mcpDesktopConnect: call('mcp:desktop-connect'),
+  mcpDesktopEntry: call('mcp:desktop-entry'),
   onMcpClient: on('mcp:client'),
   onMcpClients: on('mcp:clients'),
 

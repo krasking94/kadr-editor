@@ -12,6 +12,7 @@ import { getSettings, setSettings, setSecret, secretStatus } from './settings';
 import { attachWindow, notify } from './bridge';
 import { chat, listModels, resetSession, stopAi, transcribeFile } from './ai';
 import { clientStatus, mcpServerState, startMcpServer, stopMcpServer, syncClients } from './mcp';
+import { bridgeSelfTest, connectClaudeDesktop, desktopEntry, desktopStatus } from './desktop-link';
 
 const isDev = !!process.env.KADR_DEV_URL;
 let win: BrowserWindow | null = null;
@@ -102,10 +103,11 @@ function smokeTest(w: BrowserWindow) {
     const ui = await w.webContents.executeJavaScript(`!!document.querySelector('.welcome h1')`).catch(() => false);
     const ff = ffmpegAvailable();
     const mcp = mcpServerState();
-    console.log('SMOKE', JSON.stringify({ ui, ffmpeg: ff, mcp }));
+    const bridge = await bridgeSelfTest(mcp.port).catch(e => ({ ok: false, error: String(e) }));
+    console.log('SMOKE', JSON.stringify({ ui, ffmpeg: ff, mcp, bridge }));
     clearTimeout(fail);
     allowClose = true;
-    app.exit(ui && ff.ok ? 0 : 1);
+    app.exit(ui && ff.ok && bridge.ok ? 0 : 1);
   });
 }
 
@@ -390,6 +392,9 @@ ipcMain.handle('ai:stop', () => stopAi());
 ipcMain.handle('ai:reset', (_e, sessionId: string) => resetSession(sessionId));
 ipcMain.handle('ai:models', (_e, providerId: string, baseUrl?: string) => listModels(providerId, baseUrl));
 ipcMain.handle('mcp:status', () => ({ server: mcpServerState(), clients: clientStatus() }));
+ipcMain.handle('mcp:desktop-status', () => desktopStatus(getSettings().mcp.port));
+ipcMain.handle('mcp:desktop-connect', () => connectClaudeDesktop(getSettings().mcp.port));
+ipcMain.handle('mcp:desktop-entry', () => desktopEntry(getSettings().mcp.port));
 ipcMain.handle('mcp:restart', async () => {
   const s = getSettings();
   if (s.mcp.serverEnabled) await startMcpServer(s.mcp.port);

@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { TOOLS } from '../shared/tools';
+import { MCP_INSTRUCTIONS, TOOLS } from '../shared/tools';
 import type { McpClientConfig } from '../shared/settings';
 import { callEditor, notify } from './bridge';
 
@@ -20,7 +20,7 @@ let knownClient = '';
 function buildServer(): Server {
   const server = new Server({ name: 'kadr', version: '0.1.0' }, {
     capabilities: { tools: {} },
-    instructions: 'Kadr is a video editor. Call get_project first to see the timeline, then edit with the other tools. Every change appears live in the editor and can be undone by the user.',
+    instructions: MCP_INSTRUCTIONS,
   });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOLS.map(t => ({ name: t.name, title: t.title, description: t.description, inputSchema: t.inputSchema as any })),

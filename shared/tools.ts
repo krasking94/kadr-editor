@@ -213,6 +213,8 @@ export const TOOLS: ToolDef[] = [
   },
 ];
 
+export const MCP_INSTRUCTIONS = 'Kadr is a video editor. Call get_project first to see the timeline, then edit with the other tools. Every change appears live in the editor and can be undone by the user.';
+
 export const TOOL_TITLES: Record<string, string> = Object.fromEntries(TOOLS.map(t => [t.name, t.title]));
 
 export const SYSTEM_PROMPT = `You are the built-in assistant of «Кадр» (Kadr), a video editor. You edit the user's project by calling tools.

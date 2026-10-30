@@ -59,6 +59,10 @@
     ],
     "extraResources": [
       {
+        "from": "dist-electron/mcp-bridge.js",
+        "to": "mcp-bridge.js"
+      },
+      {
         "from": "resources/ffmpeg/win32",
         "to": "ffmpeg",
         "filter": [

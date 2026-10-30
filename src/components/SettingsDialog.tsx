@@ -1,6 +1,6 @@
 // Настройки: оформление, нейросети (ключи и модели), MCP, экспорт, клавиши, о программе.
 import { useEffect, useState } from 'react';
-import { Bot, Copy, Cpu, ExternalLink, Info, Keyboard, KeyRound, Palette, Plug, Plus, RefreshCw, Server, Settings as Gear, Trash2 } from 'lucide-react';
+import { Bot, CheckCircle2, Copy, Cpu, ExternalLink, Info, Keyboard, KeyRound, Loader2, Palette, Plug, Plus, RefreshCw, Server, Settings as Gear, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { PROVIDERS, providerPreset, SPEECH_PROVIDERS } from '../../shared/providers';
 import type { McpClientConfig } from '../../shared/settings';
@@ -162,6 +162,54 @@ function AiSettings() {
   );
 }
 
+type DesktopStatus = { installed: boolean; connected: boolean; outdated: boolean; files: string[] };
+
+/** Claude Desktop в один клик: «Кадр» сам прописывает себя в настройках Claude, Node.js не нужен */
+function ClaudeDesktopCard({ port, serverOn, lastClient }: { port: number; serverOn: boolean; lastClient?: string }) {
+  const [st, setSt] = useState<DesktopStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [justDone, setJustDone] = useState(false);
+  const [manual, setManual] = useState(false);
+  const [entry, setEntry] = useState<unknown>(null);
+  const load = () => api.mcpDesktopStatus().then(setSt).catch(() => undefined);
+  useEffect(() => { load(); }, [port]);
+  useEffect(() => { if (manual) api.mcpDesktopEntry().then(setEntry); }, [manual, port]);
+  const connect = async () => {
+    setBusy(true);
+    const r = await api.mcpDesktopConnect().catch(e => ({ ok: false, files: [], error: String(e) }));
+    setBusy(false);
+    if (r.ok) { setJustDone(true); toast('success', 'Claude Desktop подключён', { detail: 'Перезапустите Claude, чтобы он увидел «Кадр»' }); }
+    else toast('error', 'Не получилось подключить', { detail: r.error });
+    load();
+  };
+  const seen = !!lastClient && /claude/i.test(lastClient);
+  return (
+    <div className="card">
+      <div className="row"><Bot size={16} /><b>Claude Desktop</b>
+        <span className={'dot' + (st?.connected ? ' on' : '')} style={{ marginLeft: 6 }} />
+        <span className="small-text muted">{st?.connected ? (seen ? 'подключён и уже заходил' : 'подключён') : st?.outdated ? 'нужно обновить подключение' : st?.installed ? 'не подключён' : 'не найден на компьютере'}</span>
+        <div className="spacer" />
+        <button className={'btn small' + (st?.connected ? '' : ' primary')} disabled={busy} onClick={connect}>
+          {busy ? <Loader2 size={13} className="spin" /> : st?.connected ? <RefreshCw size={13} /> : <Plug size={13} />}
+          {st?.connected ? 'Подключить заново' : 'Подключить'}
+        </button>
+      </div>
+      <div className="small-text muted">Работает по вашей обычной подписке Claude, ключ API и Node.js не нужны. «Кадр» сам впишет себя в настройки Claude Desktop.</div>
+      {(justDone || (st?.connected && !seen)) && (
+        <div className="tip-card"><CheckCircle2 size={18} color="var(--good, #22c55e)" style={{ flex: 'none' }} />
+          <div><b>Остался один шаг:</b> полностью закройте Claude — значок у часов внизу справа → правая кнопка → <b>Выход</b>, — и откройте снова. Потом напишите ему: «Что сейчас открыто в Кадре?»{!serverOn && <> Сервер «Кадра» ниже сейчас выключен — включите его.</>}</div>
+        </div>
+      )}
+      {st && !st.installed && <div className="small-text muted">Скачать Claude Desktop: <a href="https://claude.ai/download" target="_blank" rel="noreferrer">claude.ai/download</a>. После установки нажмите «Подключить».</div>}
+      <button className="btn ghost small" style={{ alignSelf: 'flex-start' }} onClick={() => setManual(v => !v)}>{manual ? 'Скрыть' : 'Показать'} настройку для ручного ввода</button>
+      {manual && !!entry && <>
+        <div className="small-text muted">Файл: {st?.files[0] || 'claude_desktop_config.json'}</div>
+        <CopyBox text={JSON.stringify({ mcpServers: { kadr: entry } }, null, 2)} />
+      </>}
+    </div>
+  );
+}
+
 function McpSettings() {
   const s = useStore(st => st.settings);
   const [status, setStatus] = useState<{ server: { running: boolean; port: number; error?: string; lastClient?: string }; clients: { id: string; status: string; error?: string; tools: string[] }[] } | null>(null);
@@ -176,6 +224,7 @@ function McpSettings() {
       <div className="tip-card"><Plug size={18} color="var(--accent)" style={{ flex: 'none' }} />
         <div><b>MCP</b> — общий «язык», на котором нейросети управляют программами. Включите сервер, и Claude, Cursor или другой ИИ на вашем компьютере смогут монтировать в «Кадре»: вы будете видеть каждое их действие и сможете отменить его.</div>
       </div>
+      <ClaudeDesktopCard port={s.mcp.port} serverOn={!!status?.server.running} lastClient={status?.server.lastClient} />
       <div className="card">
         <div className="row"><Server size={16} /><b>Сервер «Кадра»</b>
           <span className={'dot' + (status?.server.running ? ' on' : status?.server.error ? ' bad' : '')} style={{ marginLeft: 6 }} />
@@ -193,8 +242,6 @@ function McpSettings() {
         <CopyBox text={url} />
         <div className="small-text muted"><b>Claude Code</b> — выполните в терминале:</div>
         <CopyBox text={`claude mcp add --transport http kadr ${url}`} />
-        <div className="small-text muted"><b>Claude Desktop</b> — вставьте в файл claude_desktop_config.json (Настройки → Разработчик → Изменить конфигурацию; нужен Node.js), затем полностью выйдите из Claude через значок у часов и откройте снова:</div>
-        <CopyBox text={JSON.stringify({ mcpServers: { kadr: { command: 'cmd', args: ['/c', 'npx', '-y', 'mcp-remote', url] } } }, null, 2)} />
         <div className="small-text muted"><b>Cursor, VS Code и другие</b> — в настройках MCP:</div>
         <CopyBox text={JSON.stringify({ mcpServers: { kadr: { url } } }, null, 2)} />
       </div>
