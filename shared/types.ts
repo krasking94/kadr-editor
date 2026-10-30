@@ -34,6 +34,7 @@ export interface ColorSettings {
   saturation: number; // 0..3, 1 = как есть
   gamma: number; // 0.1..3, 1 = как есть
   temperature: number; // -1 (холоднее) .. 1 (теплее)
+  lut?: string; // путь к файлу .cube — готовый «цветовой рецепт»
 }
 
 export type ColorPreset =
@@ -81,6 +82,36 @@ export interface MediaClip {
   transition?: Transition; // переход ИЗ предыдущего клипа (только главная дорожка)
   duck?: boolean; // приглушать эту музыку под голос
   label?: string;
+  denoise?: number; // 0..1 — убрать шум из звука
+  voice?: boolean; // «голос как в студии»: тембр, выравнивание громкости
+  key?: ChromaKey; // убрать фон заданного цвета (хромакей)
+  path?: PathPoint[]; // движение центра слоя по точкам (слежение за лицом), время от начала клипа
+  origin?: ClipOrigin; // клип сделан из обработанной копии файла (стабилизация, задом наперёд)
+}
+
+export interface ChromaKey {
+  color: string; // #rrggbb
+  similarity: number; // 0.01..0.6 — насколько близкие оттенки тоже убирать
+  blend: number; // 0..0.5 — мягкость края
+}
+
+export interface PathPoint {
+  t: number;
+  x: number;
+  y: number;
+}
+
+export interface ClipOrigin {
+  mediaId: string;
+  in: number;
+  out: number;
+  done: ('stabilize' | 'reverse')[];
+}
+
+export interface Word {
+  s: number; // начало слова от начала клипа, сек
+  e: number; // конец
+  w: string;
 }
 
 export type TextAnim = 'none' | 'fade' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right' | 'zoom';
@@ -116,6 +147,8 @@ export interface TextClip {
   animOut: TextAnim;
   animDuration: number;
   subtitle?: boolean;
+  words?: Word[]; // слова со временем — для субтитров «слово за словом»
+  highlight?: string; // цвет произносимого слова (если есть words)
 }
 
 export type Clip = MediaClip | TextClip;
@@ -164,10 +197,13 @@ export interface ExportOptions {
   encoder: 'auto' | 'cpu' | 'nvenc' | 'qsv' | 'amf';
   rangeStart?: number;
   rangeEnd?: number;
+  loudness?: number; // целевая громкость в LUFS (−14 для YouTube и ВК); не задано — без выравнивания
 }
 
 // Картинки текста, которые окно программы рисует для экспорта
 export interface TextRender {
   clipId: string;
   path: string; // PNG размером с кадр
+  from?: number; // для субтитров «слово за словом»: картинка показывается с from до to (от начала клипа)
+  to?: number;
 }
