@@ -205,7 +205,7 @@ function trackFor(p: Project, kind: TrackKind, start: number, dur: number): Trac
 }
 
 // ── Клипы ────────────────────────────────────────────
-export function addToTimeline(mediaId: string, where: 'main' | 'overlay' | 'audio', o: { index?: number; start?: number; in?: number; out?: number; trackId?: string; source?: string } = {}): string | null {
+export function addToTimeline(mediaId: string, where: 'main' | 'overlay' | 'audio', o: { index?: number; start?: number; in?: number; out?: number; trackId?: string; source?: string; patch?: Partial<MediaClip>; label?: string } = {}): string | null {
   const p0 = get().project!;
   const m = mediaById(p0, mediaId);
   if (!m) throw new Error('Нет такого файла в медиатеке: ' + mediaId);
@@ -218,7 +218,8 @@ export function addToTimeline(mediaId: string, where: 'main' | 'overlay' | 'audi
     clip.transform = { x: 0.75, y: 0.27, scale: 0.4, rotation: 0, opacity: 1 };
     clip.transformEnd = { ...clip.transform };
   }
-  const label = where === 'main' ? `«${m.name}» на основной дорожке` : where === 'overlay' ? `«${m.name}» поверх видео` : `«${m.name}» на звуковой дорожке`;
+  if (o.patch) Object.assign(clip, o.patch);
+  const label = o.label || (where === 'main' ? `«${m.name}» на основной дорожке` : where === 'overlay' ? `«${m.name}» поверх видео` : `«${m.name}» на звуковой дорожке`);
   commit(label, p => {
     if (where === 'main') {
       const t = mainTrack(p);

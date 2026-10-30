@@ -66,6 +66,12 @@ const api = {
   aiModels: call('ai:models'),
   onAiEvent: on('ai:event'),
 
+  genImage: call('gen:image'),
+  genSpeech: call('gen:speech'),
+  genSfx: call('gen:sfx'),
+  genMusic: call('gen:music'),
+  genVoices: call('gen:voices'),
+
   mcpStatus: call('mcp:status'),
   mcpRestart: call('mcp:restart'),
   mcpDesktopStatus: call('mcp:desktop-status'),

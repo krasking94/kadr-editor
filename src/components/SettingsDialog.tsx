@@ -1,6 +1,7 @@
 // Настройки: оформление, нейросети (ключи и модели), MCP, экспорт, клавиши, о программе.
 import { useEffect, useState } from 'react';
-import { Bot, CheckCircle2, Copy, Cpu, ExternalLink, Info, Keyboard, KeyRound, Loader2, Palette, Plug, Plus, RefreshCw, Server, Settings as Gear, Trash2 } from 'lucide-react';
+import { AudioLines, Bot, CheckCircle2, Copy, Cpu, ExternalLink, ImagePlus, Info, Keyboard, KeyRound, Loader2, Palette, Play, Plug, Plus, RefreshCw, Server, Settings as Gear, Trash2 } from 'lucide-react';
+import { ELEVEN_TTS_MODELS, IMAGE_PROVIDERS, imageProvider, type Voice } from '../../shared/generators';
 import { api } from '../api';
 import { PROVIDERS, providerPreset, SPEECH_PROVIDERS } from '../../shared/providers';
 import type { McpClientConfig } from '../../shared/settings';
@@ -14,6 +15,7 @@ import { Logo } from './Logo';
 const NAV = [
   { id: 'general', label: 'Общие', icon: Palette },
   { id: 'ai', label: 'Нейросети', icon: Bot },
+  { id: 'gen', label: 'Картинки и звук', icon: ImagePlus },
   { id: 'mcp', label: 'Внешний ИИ (MCP)', icon: Plug },
   { id: 'export', label: 'Сохранение видео', icon: Cpu },
   { id: 'keys', label: 'Горячие клавиши', icon: Keyboard },
@@ -31,6 +33,7 @@ export function SettingsDialog() {
         <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16, overflow: 'auto', maxHeight: 'calc(100vh - 180px)' }}>
           {tab === 'general' && <General />}
           {tab === 'ai' && <AiSettings />}
+          {tab === 'gen' && <GenSettings />}
           {tab === 'mcp' && <McpSettings />}
           {tab === 'export' && <ExportSettings />}
           {tab === 'keys' && <ShortcutsList />}
@@ -157,6 +160,101 @@ function AiSettings() {
           </div>
         </div>
         <div className="small-text muted">Ключ для распознавания берётся из того же сервиса выше. Groq даёт бесплатный лимит.</div>
+      </div>
+    </>
+  );
+}
+
+/** Поле ключа: показывает, сохранён ли он, и где его взять */
+function KeyField({ id, url, label = 'Ключ API' }: { id: string; url?: string; label?: string }) {
+  const secrets = useStore(st => st.secrets);
+  const [key, setKey] = useState('');
+  return (
+    <div className="field">
+      <label>{label} {secrets[id] ? <span style={{ color: 'var(--good)' }}>● сохранён</span> : <span style={{ color: 'var(--warn)' }}>● нет ключа</span>}
+        {url && <a style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => api.openExternal(url)}>Где взять ключ <ExternalLink size={11} /></a>}
+      </label>
+      <div className="row">
+        <input className="input" type="password" value={key} placeholder={secrets[id] ? '•••••••• (вставьте новый, чтобы заменить)' : 'Вставьте ключ сюда (Ctrl+V)'} onChange={e => setKey(e.target.value)} />
+        <button className="btn primary" disabled={!key.trim()} onClick={async () => { await saveSecret(id, key.trim()); setKey(''); toast('success', 'Ключ сохранён'); }}>Сохранить</button>
+        {secrets[id] && <button className="btn ghost" data-tip="Удалить ключ" onClick={() => saveSecret(id, '')}><Trash2 size={14} /></button>}
+      </div>
+    </div>
+  );
+}
+
+function GenSettings() {
+  const s = useStore(st => st.settings);
+  const secrets = useStore(st => st.secrets);
+  const g = s.gen;
+  const save = (patch: Partial<typeof g>) => saveSettings({ gen: { ...g, ...patch } });
+  const p = imageProvider(g.imageProvider);
+  const [voices, setVoices] = useState<Voice[]>([]);
+  const [loading, setLoading] = useState(false);
+  const loadVoices = async () => {
+    setLoading(true);
+    try { setVoices(await api.genVoices()); } catch (e) { toast('error', 'Не удалось получить голоса', { detail: String((e as Error).message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }); }
+    setLoading(false);
+  };
+  useEffect(() => { if (secrets.elevenlabs) loadVoices(); }, [!!secrets.elevenlabs]);
+  const preview = (url?: string) => { if (url) new Audio(url).play().catch(() => undefined); };
+  return (
+    <>
+      <div className="tip-card"><ImagePlus size={18} color="var(--accent)" style={{ flex: 'none' }} />
+        <div><b>Создание прямо в «Кадре».</b> Вкладка <b>«Создать»</b> слева рисует картинки, озвучивает текст, делает звуки и музыку и сразу кладёт их на таймлайн. Это же умеют встроенный помощник и Claude по MCP: просто попросите. Готовые файлы сохраняются в папку «Документы → Кадр → Сгенерировано».</div>
+      </div>
+      <div className="card">
+        <div className="row"><ImagePlus size={16} /><b>Картинки</b></div>
+        <div className="provider-list">
+          {IMAGE_PROVIDERS.map(x => (
+            <button key={x.id} className={'provider' + (g.imageProvider === x.id ? ' on' : '')} onClick={() => save({ imageProvider: x.id })}>
+              {x.label}
+              <span className={'k' + (secrets[x.keyId] || x.id === 'custom-image' ? ' ok' : '')} data-tip={secrets[x.keyId] ? 'Ключ сохранён' : 'Нет ключа'} />
+            </button>
+          ))}
+        </div>
+        {p.hint && <div className="small-text muted">{p.hint}</div>}
+        <div className="small-text">Цена: <b>{p.price}</b>. Платите самому сервису, «Кадр» ничего не берёт.</div>
+        {(p.keyId === 'openai' || p.keyId === 'gemini') && <div className="small-text muted">Ключ общий с помощником: если вы уже вставили его на вкладке «Нейросети», ничего делать не нужно.</div>}
+        <KeyField id={p.keyId} url={p.keyUrl} />
+        {p.id === 'custom-image' && (
+          <div className="field"><label>Адрес сервиса</label>
+            <input className="input mono" value={g.imageBaseUrl} placeholder={p.baseUrl} onChange={e => save({ imageBaseUrl: e.target.value })} />
+          </div>
+        )}
+        <div className="row" style={{ alignItems: 'flex-end' }}>
+          <div className="field grow"><label>Модель <span className="muted">по умолчанию: {p.model || '—'}</span></label>
+            <input className="input mono" value={g.imageModels[p.id] || ''} placeholder={p.model} onChange={e => save({ imageModels: { ...g.imageModels, [p.id]: e.target.value.trim() } })} />
+          </div>
+          <div className="field"><label>Пропорции</label>
+            <select className="input" value={g.imageAspect} onChange={e => save({ imageAspect: e.target.value })}>
+              <option value="auto">Как у проекта</option>
+              {['16:9', '9:16', '1:1', '4:3', '3:4'].map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="row"><AudioLines size={16} /><b>Голос, звуки и музыка — ElevenLabs</b></div>
+        <div className="small-text muted">Озвучка текста живыми голосами (в том числе вашими клонами), звуковые эффекты по описанию и музыка без авторских прав. Расходует кредиты вашей подписки ElevenLabs: голос — по количеству букв, звуки и музыка — по длительности.</div>
+        <KeyField id="elevenlabs" url="https://elevenlabs.io/app/settings/api-keys" />
+        <div className="row" style={{ alignItems: 'flex-end' }}>
+          <div className="field grow"><label>Голос по умолчанию</label>
+            <div className="row">
+              <select className="input" value={g.voiceId} onChange={e => { const v = voices.find(x => x.id === e.target.value); save({ voiceId: e.target.value, voiceName: v?.name || '' }); }}>
+                <option value="">{voices.length ? 'Первый из списка' : g.voiceName || (secrets.elevenlabs ? 'Загрузите голоса' : 'Сначала вставьте ключ')}</option>
+                {voices.map(v => <option key={v.id} value={v.id}>{v.name}{v.info ? ` — ${v.info}` : ''}</option>)}
+              </select>
+              <button className="icon-btn" data-tip="Послушать" disabled={!voices.find(v => v.id === g.voiceId)?.preview} onClick={() => preview(voices.find(v => v.id === g.voiceId)?.preview)}><Play size={14} /></button>
+              <button className="btn" onClick={loadVoices} disabled={loading || !secrets.elevenlabs}><RefreshCw size={14} className={loading ? 'spin' : ''} /> Голоса</button>
+            </div>
+          </div>
+          <div className="field"><label>Модель речи</label>
+            <select className="input" value={g.ttsModel} onChange={e => save({ ttsModel: e.target.value })}>
+              {ELEVEN_TTS_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+          </div>
+        </div>
       </div>
     </>
   );

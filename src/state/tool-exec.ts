@@ -6,6 +6,7 @@ import { clipDuration, findClip, FORMAT_PRESETS, projectDuration } from '../../s
 import { TOOL_TITLES } from '../../shared/tools';
 import * as A from './actions';
 import { commit, get, redo, set, undo } from './store';
+import { generate } from './generate';
 
 export interface ToolOutput { text: string; image?: string; isError?: boolean }
 
@@ -99,6 +100,26 @@ export async function execTool(name: string, a: any, source: string): Promise<To
       if (a.anim_out) patch.animOut = a.anim_out;
       A.updateTextClip(a.clip_id, patch, 'Текст изменён', { source, coalesce: '' });
       return ok('Text updated');
+    }
+    case 'generate_image': {
+      const r = await generate({ kind: 'image', prompt: String(a.prompt || ''), aspect: a.aspect, place: a.place || 'main', index: a.index, start: a.start, duration: a.duration, animate: a.animate }, source);
+      return ok('Image created and imported', { media_id: r.media.id, clip_id: r.clipId, duration: r2(r.duration), file: r.path });
+    }
+    case 'list_voices': {
+      const voices = await api.genVoices();
+      return ok('Voices (default: ' + (get().settings.gen.voiceName || 'first in list') + ')', voices);
+    }
+    case 'generate_speech': {
+      const r = await generate({ kind: 'speech', prompt: String(a.text || ''), voiceId: a.voice_id, start: a.start, place: a.place === false ? 'none' : 'audio' }, source);
+      return ok('Speech created', { media_id: r.media.id, clip_id: r.clipId, duration: r2(r.duration) });
+    }
+    case 'generate_sound_effect': {
+      const r = await generate({ kind: 'sfx', prompt: String(a.prompt || ''), duration: a.duration, start: a.start, place: a.place === false ? 'none' : 'audio' }, source);
+      return ok('Sound effect created', { media_id: r.media.id, clip_id: r.clipId, duration: r2(r.duration) });
+    }
+    case 'generate_music': {
+      const r = await generate({ kind: 'music', prompt: String(a.prompt || ''), duration: a.duration, vocals: !!a.vocals, start: a.start, volume: a.volume, place: a.place === false ? 'none' : 'audio' }, source);
+      return ok('Music created (ducks under speech automatically)', { media_id: r.media.id, clip_id: r.clipId, duration: r2(r.duration) });
     }
     case 'add_subtitles':
       A.addSubtitles(a.items || [], !!a.replace, a.style || {}, source);

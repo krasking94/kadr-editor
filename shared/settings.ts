@@ -38,6 +38,15 @@ export interface Settings {
     speechModel: string;
     speechLanguage: string;
   };
+  gen: {
+    imageProvider: string;
+    imageModels: Record<string, string>; // своя модель для сервиса, если меняли
+    imageBaseUrl: string; // для «своего адреса»
+    imageAspect: string;
+    voiceId: string;
+    voiceName: string;
+    ttsModel: string;
+  };
   mcp: {
     serverEnabled: boolean;
     port: number;
@@ -55,5 +64,6 @@ export const defaultSettings = (): Settings => ({
   showTips: true,
   snapping: true,
   ai: { provider: 'anthropic', providers: {}, speechProvider: 'openai', speechModel: 'whisper-1', speechLanguage: 'ru' },
+  gen: { imageProvider: 'openai', imageModels: {}, imageBaseUrl: '', imageAspect: 'auto', voiceId: '', voiceName: '', ttsModel: 'eleven_v4' },
   mcp: { serverEnabled: true, port: 7788, clients: [] },
 });

@@ -15,7 +15,7 @@ export function getSettings(): Settings {
   try {
     if (existsSync(file())) {
       const saved = JSON.parse(readFileSync(file(), 'utf8'));
-      cache = { ...base, ...saved, ai: { ...base.ai, ...saved.ai }, mcp: { ...base.mcp, ...saved.mcp } };
+      cache = { ...base, ...saved, ai: { ...base.ai, ...saved.ai }, gen: { ...base.gen, ...saved.gen }, mcp: { ...base.mcp, ...saved.mcp } };
       return cache!;
     }
   } catch { /* повреждённый файл — начинаем с настроек по умолчанию */ }
@@ -25,7 +25,7 @@ export function getSettings(): Settings {
 
 export function setSettings(patch: Partial<Settings>): Settings {
   const cur = getSettings();
-  cache = { ...cur, ...patch, ai: { ...cur.ai, ...(patch.ai || {}) }, mcp: { ...cur.mcp, ...(patch.mcp || {}) } };
+  cache = { ...cur, ...patch, ai: { ...cur.ai, ...(patch.ai || {}) }, gen: { ...cur.gen, ...(patch.gen || {}) }, mcp: { ...cur.mcp, ...(patch.mcp || {}) } };
   mkdirSync(dirname(file()), { recursive: true });
   writeFileSync(file(), JSON.stringify(cache, null, 2));
   return cache;

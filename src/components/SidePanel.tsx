@@ -2,11 +2,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Blend, Camera, Captions, Clapperboard, Film, FolderOpen, Image as ImageIcon, Layers, Mic, Music, Plus, Scissors,
-  Sparkles, Square, Trash2, Type, Upload, Video, Wand2, WandSparkles, AudioLines, TriangleAlert,
+  Sparkles, Square, Trash2, Type, Upload, Video, Wand2, WandSparkles, AudioLines, TriangleAlert, ImagePlus, Loader2, Speech, Volume2, Play,
 } from 'lucide-react';
+import { imageProvider, type Voice } from '../../shared/generators';
+import { generate, cleanError, projectAspect, type GenKind } from '../state/generate';
 import { api, mediaUrl } from '../api';
 import type { MediaClip, MediaItem, TransitionType } from '../../shared/types';
-import { COLOR_PRESETS, findClip, formatTime, mainTrack, TRANSITIONS } from '../../shared/timeline';
+import { COLOR_PRESETS, findClip, formatTime, mainTrack, projectDuration, TRANSITIONS } from '../../shared/timeline';
 import { providerPreset } from '../../shared/providers';
 import { get, set, toast, useStore } from '../state/store';
 import * as A from '../state/actions';
@@ -14,9 +16,9 @@ import { askAssistant } from '../state/assistant';
 import { TEXT_PRESETS } from '../lib/text-presets';
 import { transitionFx } from '../lib/transition-fx';
 import { DND_MEDIA, DND_TEXT } from '../lib/dnd';
-import { openMenu, Segmented, Slider } from './ui';
+import { openMenu, Segmented, Slider, Switch } from './ui';
 
-export type RailTab = 'media' | 'text' | 'transitions' | 'filters' | 'record' | 'ai';
+export type RailTab = 'media' | 'text' | 'transitions' | 'filters' | 'record' | 'create' | 'ai';
 
 const RAIL: { id: RailTab; label: string; icon: typeof Film; tip: string }[] = [
   { id: 'media', label: 'Медиа', icon: Film, tip: 'Ваши видео, фото и музыка' },
@@ -24,6 +26,7 @@ const RAIL: { id: RailTab; label: string; icon: typeof Film; tip: string }[] = [
   { id: 'transitions', label: 'Переходы', icon: Blend, tip: 'Плавные склейки между клипами' },
   { id: 'filters', label: 'Фильтры', icon: Wand2, tip: 'Цвет и эффекты' },
   { id: 'record', label: 'Запись', icon: Mic, tip: 'Голос с микрофона или видео с камеры' },
+  { id: 'create', label: 'Создать', icon: ImagePlus, tip: 'Нейросеть нарисует картинку, озвучит текст, сделает звук или музыку' },
   { id: 'ai', label: 'ИИ', icon: Sparkles, tip: 'Автоматический монтаж' },
 ];
 
@@ -47,6 +50,7 @@ export function SidePanel({ tab }: { tab: RailTab }) {
       {tab === 'transitions' && <TransitionsPanel />}
       {tab === 'filters' && <FiltersPanel />}
       {tab === 'record' && <RecordPanel />}
+      {tab === 'create' && <CreatePanel />}
       {tab === 'ai' && <AiPanel />}
     </div>
   );
@@ -472,6 +476,119 @@ function AiPanel() {
           <div className="row"><WandSparkles size={16} color="var(--accent)" /><b>Попросить помощника</b></div>
           {!ready && <div className="small-text" style={{ color: 'var(--warn)' }}>Сначала подключите нейросеть — это займёт минуту. <a style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => set({ dialog: 'settings', settingsTab: 'ai' })}>Подключить</a></div>}
           <div className="quick">{IDEAS.map(i => <button key={i} className="chip" onClick={() => askAssistant(i, true)}>{i}</button>)}</div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Создать нейросетью ───────────────────────────────
+const KINDS: { value: GenKind; label: string; icon: typeof Film; placeholder: string; ideas: string[] }[] = [
+  { value: 'image', label: 'Картинка', icon: ImagePlus, placeholder: 'Что нарисовать? Например: уютная кофейня осенью, тёплый свет, вид из окна',
+    ideas: ['Обложка в стиле кино: город ночью, неон, дождь', 'Фон для заставки: мягкий градиент, абстракция', 'Иллюстрация в стиле акварели: лес на рассвете'] },
+  { value: 'speech', label: 'Голос', icon: Speech, placeholder: 'Текст, который нужно прочитать вслух',
+    ideas: ['Привет! Сегодня я покажу, как сделать это за пять минут.', 'Подписывайтесь, чтобы не пропустить новые видео!'] },
+  { value: 'sfx', label: 'Звук', icon: Volume2, placeholder: 'Какой звук нужен? Лучше по-английски: whoosh transition, applause, camera shutter',
+    ideas: ['Whoosh transition', 'Crowd applause', 'Camera shutter click', 'Notification ding'] },
+  { value: 'music', label: 'Музыка', icon: Music, placeholder: 'Какая музыка? Жанр, настроение, темп, инструменты',
+    ideas: ['Спокойный лоу-фай с пианино для влога', 'Энергичный электро-поп для рекламы', 'Эпичная оркестровая музыка для трейлера'] },
+];
+
+let voicesCache: Voice[] | null = null;
+
+function CreatePanel() {
+  const settings = useStore(s => s.settings);
+  const secrets = useStore(s => s.secrets);
+  const project = useStore(s => s.project);
+  const [kind, setKind] = useState<GenKind>('image');
+  const [prompts, setPrompts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<GenKind | null>(null);
+  const [place, setPlace] = useState<'main' | 'overlay' | 'none'>('main');
+  const [imgDur, setImgDur] = useState(4);
+  const [zoom, setZoom] = useState(true);
+  const [sfxDur, setSfxDur] = useState(0);
+  const projLen = Math.min(300, Math.max(10, Math.ceil(project ? projectDuration(project) : 30)));
+  const [musicDur, setMusicDur] = useState(0);
+  const [vocals, setVocals] = useState(false);
+  const [volume, setVolume] = useState(0.35);
+  const [voices, setVoices] = useState<Voice[]>(voicesCache || []);
+  const [voiceId, setVoiceId] = useState(settings.gen.voiceId);
+  const k = KINDS.find(x => x.value === kind)!;
+  const prompt = prompts[kind] || '';
+  const ip = imageProvider(settings.gen.imageProvider);
+  const keyOk = kind === 'image' ? (ip.id === 'custom-image' || !!secrets[ip.keyId]) : !!secrets.elevenlabs;
+  useEffect(() => {
+    if (kind === 'speech' && secrets.elevenlabs && !voicesCache) api.genVoices().then((v: Voice[]) => { voicesCache = v; setVoices(v); }).catch(() => undefined);
+  }, [kind, !!secrets.elevenlabs]);
+  const run = async () => {
+    if (!prompt.trim() || busy) return;
+    setBusy(kind);
+    try {
+      await generate({
+        kind, prompt: prompt.trim(),
+        ...(kind === 'image' ? { place, duration: imgDur, animate: place === 'main' && zoom } : {}),
+        ...(kind === 'speech' ? { voiceId: voiceId || undefined } : {}),
+        ...(kind === 'sfx' ? { duration: sfxDur || undefined } : {}),
+        ...(kind === 'music' ? { duration: musicDur || projLen, vocals, volume } : {}),
+      });
+    } catch (e) {
+      toast('error', 'Не получилось', { detail: cleanError(e) });
+    }
+    setBusy(null);
+  };
+  const service = kind === 'image' ? ip.label : 'ElevenLabs';
+  return (
+    <>
+      <div className="panel-head"><ImagePlus size={16} /><h3>Создать нейросетью</h3></div>
+      <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="gen-kinds">
+          {KINDS.map(x => (
+            <button key={x.value} className={'gen-kind' + (kind === x.value ? ' on' : '')} onClick={() => setKind(x.value)}>
+              {busy === x.value ? <Loader2 size={18} className="spin" /> : <x.icon size={18} />}{x.label}
+            </button>
+          ))}
+        </div>
+        <div className="card">
+          <textarea className="input" rows={4} value={prompt} placeholder={k.placeholder}
+            onChange={e => setPrompts({ ...prompts, [kind]: e.target.value })}
+            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) run(); }} />
+          <div className="quick">{k.ideas.map(i => <button key={i} className="chip" onClick={() => setPrompts({ ...prompts, [kind]: i })}>{i}</button>)}</div>
+          {kind === 'image' && <>
+            <Segmented value={place} onChange={setPlace} options={[
+              { value: 'main', label: 'В ролик', tip: 'В конец основной дорожки' },
+              { value: 'overlay', label: 'Поверх', tip: 'Картинка в картинке с места курсора' },
+              { value: 'none', label: 'В файлы', tip: 'Сохранить в медиатеку, на таймлайн не ставить' },
+            ]} />
+            {place !== 'none' && <Slider label="Сколько показывать" value={imgDur} min={1} max={15} step={0.5} def={4} unit=" с" onChange={setImgDur} />}
+            {place === 'main' && <Switch checked={zoom} onChange={setZoom} label="Плавное приближение (оживить картинку)" />}
+            <div className="small-text muted">Пропорции: {settings.gen.imageAspect === 'auto' ? `как у проекта (${projectAspect()})` : settings.gen.imageAspect}</div>
+          </>}
+          {kind === 'speech' && (
+            <div className="row">
+              <select className="input" value={voiceId} onChange={e => setVoiceId(e.target.value)}>
+                <option value="">{settings.gen.voiceName ? `Голос из настроек: ${settings.gen.voiceName}` : 'Голос по умолчанию'}</option>
+                {voices.map(v => <option key={v.id} value={v.id}>{v.name}{v.info ? ` — ${v.info}` : ''}</option>)}
+              </select>
+              <button className="icon-btn" data-tip="Послушать голос" disabled={!voices.find(v => v.id === voiceId)?.preview}
+                onClick={() => { const u = voices.find(v => v.id === voiceId)?.preview; if (u) new Audio(u).play().catch(() => undefined); }}><Play size={14} /></button>
+            </div>
+          )}
+          {kind === 'speech' && <div className="small-text muted">Озвучка встанет на звуковую дорожку с места курсора.</div>}
+          {kind === 'sfx' && <Slider label="Длительность" value={sfxDur} min={0} max={30} step={0.5} def={0} unit=" с" format={v => (v ? v + ' с' : 'авто')} onChange={setSfxDur} />}
+          {kind === 'music' && <>
+            <Slider label="Длительность" value={musicDur || projLen} min={10} max={300} step={5} def={projLen} unit=" с" onChange={setMusicDur} />
+            <Slider label="Громкость" value={volume} min={0} max={1} step={0.05} def={0.35} format={v => Math.round(v * 100) + ' %'} onChange={setVolume} />
+            <Switch checked={vocals} onChange={setVocals} label="С вокалом (песня)" />
+            <div className="small-text muted">Музыка встанет с начала ролика и сама станет тише, когда говорят.</div>
+          </>}
+          {!keyOk && <div className="small-text" style={{ color: 'var(--warn)' }}>Нужен ключ «{service}». <a style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => set({ dialog: 'settings', settingsTab: 'gen' })}>Вставить ключ</a></div>}
+          <button className="btn primary" disabled={!prompt.trim() || !!busy || !project} onClick={run}>
+            {busy === kind ? <><Loader2 size={14} className="spin" /> {kind === 'music' ? 'Пишу музыку, до минуты…' : 'Создаю…'}</> : <><WandSparkles size={14} /> Создать</>}
+          </button>
+          <div className="small-text muted" style={{ textAlign: 'center' }}>{service} · <a style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => set({ dialog: 'settings', settingsTab: 'gen' })}>настройки</a> · Ctrl+Enter</div>
+        </div>
+        <div className="tip-card"><Sparkles size={16} color="var(--accent)" style={{ flex: 'none' }} />
+          <div className="small-text">Можно попросить ИИ-помощника или Claude: «нарисуй заставку, озвучь текст и подложи спокойную музыку» — он сделает всё сам.</div>
         </div>
       </div>
     </>

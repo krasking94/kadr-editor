@@ -196,6 +196,56 @@ export const TOOLS: ToolDef[] = [
     inputSchema: obj({ clip_ids: { type: 'array', items: { type: 'string' } } }, ['clip_ids']),
   },
   {
+    name: 'generate_image', title: 'Рисую картинку',
+    description: 'Generate an image with the image AI configured in Kadr settings (OpenAI GPT Image, Google Nano Banana or FLUX), save it to the user Documents/Кадр/Сгенерировано folder, import it and place it on the timeline. Write a detailed visual prompt (subject, style, lighting, composition); English or Russian both work. place: "main" appends to the main track (or at index), "overlay" puts it over the video at start (picture-in-picture), "none" only imports to the media library. aspect defaults to the project format. Returns media_id and clip_id.',
+    inputSchema: obj({
+      prompt: str('What to draw'),
+      aspect: str('Aspect ratio', ['16:9', '9:16', '1:1', '4:3', '3:4']),
+      place: str('Where to put it', ['main', 'overlay', 'none']),
+      index: num('Position on the main track (0 = first). Default: end'),
+      start: num('Overlay start time, seconds. Default: playhead'),
+      duration: num('How long the image stays on screen, seconds. Default 4'),
+      animate: bool('Slow zoom-in (Ken Burns), default true on the main track'),
+    }, ['prompt']),
+  },
+  {
+    name: 'list_voices', title: 'Смотрю голоса',
+    description: 'List ElevenLabs voices available to the user (id, name, description). The voice chosen in settings is used by default.',
+    inputSchema: obj({}),
+  },
+  {
+    name: 'generate_speech', title: 'Озвучиваю текст',
+    description: 'Voice-over: turn text into natural speech with ElevenLabs and place it on an audio track at start. Music on tracks with ducking automatically gets quieter under it. Write the text exactly as it should be spoken; numbers and abbreviations in words. Returns media_id, clip_id and the clip duration.',
+    inputSchema: obj({
+      text: str('Text to speak'),
+      voice_id: str('Optional ElevenLabs voice id from list_voices'),
+      start: num('Timeline start, seconds. Default: playhead'),
+      place: bool('Put on the timeline (default true)'),
+    }, ['text']),
+  },
+  {
+    name: 'generate_sound_effect', title: 'Создаю звук',
+    description: 'Generate a sound effect with ElevenLabs from a description (e.g. "whoosh transition", "crowd applause", "door creak") and place it on an audio track at start.',
+    inputSchema: obj({
+      prompt: str('Describe the sound, English works best'),
+      duration: num('Length in seconds 0.5..30. Default: automatic'),
+      start: num('Timeline start, seconds. Default: playhead'),
+      place: bool('Put on the timeline (default true)'),
+    }, ['prompt']),
+  },
+  {
+    name: 'generate_music', title: 'Пишу музыку',
+    description: 'Compose background music with ElevenLabs Music from a description (genre, mood, tempo, instruments) and place it on an audio track at start with auto-ducking under speech. Takes up to a minute.',
+    inputSchema: obj({
+      prompt: str('Describe the music'),
+      duration: num('Length in seconds 3..300. Default: project length (at least 10s)'),
+      vocals: bool('Allow singing (default false: instrumental)'),
+      start: num('Timeline start, seconds. Default 0'),
+      volume: num('Volume 0..2, default 0.35'),
+      place: bool('Put on the timeline (default true)'),
+    }, ['prompt']),
+  },
+  {
     name: 'undo', title: 'Отменяю', description: 'Undo the last change.', inputSchema: obj({}),
   },
   {
