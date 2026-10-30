@@ -40,7 +40,7 @@ const RAIL: { id: RailTab; label: string; icon: typeof Film; tip: string }[] = [
 
 export function LeftRail({ tab, onTab, right }: { tab: RailTab | null; onTab: (t: RailTab) => void; right?: boolean }) {
   return (
-    <div className="left-rail">
+    <div className={"left-rail" + (right ? " on-right" : "")}>
       {RAIL.map(r => (
         <button key={r.id} className={'rail-btn' + (tab === r.id ? ' on' : '')} onClick={() => onTab(r.id)} data-tip={r.tip} data-tip-pos={right ? 'left' : 'right'}>
           <r.icon size={19} />{r.label}

@@ -10,6 +10,7 @@ import { chunkWords, estimateWords, findFillers, DEFAULT_FILLERS, type TimedWord
 import { askConfirm, commit, endTask, get, set, startTask, toast, updateTask } from './store';
 import { addSubtitles, addTrack, BLOGGER_STYLE, importFiles, loadMediaCache, setProjectFormat, transcribeProject, type Segment } from './actions';
 import { cameraPath, faceDetector, trackFaces } from '../lib/face-track';
+import { personMasks } from '../lib/segment';
 import { renderShape, type ShapeKind } from '../lib/stickers';
 
 const clean = (e: unknown) => String((e as Error)?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -38,14 +39,21 @@ export async function processClip(clipId: string, kind: 'stabilize' | 'reverse',
     off();
     endTask(task);
   }
+  await useProcessed(clipId, path, kind, kind === 'stabilize' ? 'Тряска убрана' : 'Видео задом наперёд', source);
+}
+
+// Клип начинает играть обработанную копию; исходник запоминается, чтобы можно было вернуть
+async function useProcessed(clipId: string, path: string, kind: 'stabilize' | 'reverse' | 'nobg', label: string, source?: string) {
+  const p = get().project!;
+  const m = mediaById(p, (findClip(p, clipId)!.clip as MediaClip).mediaId)!;
   const info = await api.probe(path);
-  const suffix = kind === 'stabilize' ? 'без тряски' : 'задом наперёд';
-  const media: MediaItem = { id: uid('m'), ...info, name: `${m.name.replace(/\.[^.]+$/, '')} — ${suffix}` };
-  commit(kind === 'stabilize' ? 'Тряска убрана' : 'Видео задом наперёд', pr => {
+  const suffix = kind === 'stabilize' ? 'без тряски' : kind === 'reverse' ? 'задом наперёд' : 'без фона';
+  const media: MediaItem = { id: uid('m'), ...info, name: `${m.name.replace(/\.[^.]+$/, '')} — ${suffix}`, ...(kind === 'nobg' ? { alpha: true } : {}) };
+  commit(label, pr => {
     if (!pr.media.some(x => x.path === media.path)) pr.media.push(media);
     const mm = pr.media.find(x => x.path === media.path)!;
     const cc = findClip(pr, clipId)!.clip as MediaClip;
-    const origin = cc.origin ? { ...cc.origin, done: [...cc.origin.done] } : { mediaId: cc.mediaId, in: cc.in, out: cc.out, done: [] as ('stabilize' | 'reverse')[] };
+    const origin = cc.origin ? { ...cc.origin, done: [...cc.origin.done] } : { mediaId: cc.mediaId, in: cc.in, out: cc.out, done: [] as NonNullable<MediaClip['origin']>['done'] };
     // второй переворот возвращает прямой ход — просто убираем отметку
     if (kind === 'reverse' && origin.done.includes('reverse')) origin.done = origin.done.filter(d => d !== 'reverse');
     else origin.done.push(kind);
@@ -54,6 +62,52 @@ export async function processClip(clipId: string, kind: 'stabilize' | 'reverse',
     return [clipId];
   }, { source });
   loadMediaCache(media);
+}
+
+/** Убрать фон у человека в кадре без зелёного экрана: нейросеть на компьютере, затем видео с прозрачным фоном */
+export async function removeBackground(clipId: string, source?: string): Promise<void> {
+  const p = get().project!;
+  const f = findClip(p, clipId);
+  if (!f || f.clip.type !== 'media') throw new Error('Нет такого клипа');
+  const c = f.clip;
+  const m = mediaById(p, c.mediaId);
+  if (!m || m.kind !== 'video') throw new Error('Фон без зелёного экрана пока убирается только у видео');
+  if (m.alpha) throw new Error('У этого клипа фон уже убран');
+  const jobId = 'b' + Date.now();
+  let cancelled = false;
+  const task = startTask('Убираю фон', () => { cancelled = true; api.nobgCancel(jobId); });
+  const off = api.onProcessProgress((ev: { jobId: string; progress: number }) => { if (ev.jobId === jobId) updateTask(task, { progress: 0.6 + ev.progress * 0.4 }); });
+  let path: string;
+  try {
+    const prep = await api.nobgPrepare(jobId, m.path, c.in, c.out, m.width, m.height, m.fps);
+    if (prep.done) path = prep.done;
+    else {
+      // кадры идут пачками: нейросеть отмечает человека, маски уходят обратно на сборку
+      const batch = 24;
+      let last: Float32Array | null = null;
+      for (let i = 0; i < prep.frames; i += batch) {
+        if (cancelled) throw new Error('Отменено');
+        const rgba: Uint8Array = await api.nobgFrames(jobId, i, batch);
+        const r = await personMasks(rgba, prep.mw, prep.mh, last);
+        last = r.last;
+        await api.nobgWrite(jobId, r.masks);
+        updateTask(task, { progress: 0.02 + (i / prep.frames) * 0.58 });
+      }
+      if (cancelled) throw new Error('Отменено');
+      path = await api.nobgFinish(jobId);
+    }
+  } catch (e) {
+    api.nobgCancel(jobId);
+    const msg = clean(e);
+    if (msg !== 'Отменено') toast('error', 'Не удалось убрать фон', { detail: msg });
+    throw new Error(msg);
+  } finally {
+    off();
+    endTask(task);
+  }
+  await useProcessed(clipId, path, 'nobg', 'Фон убран', source);
+  const kind = f.track.kind;
+  toast('success', 'Фон убран', { detail: kind === 'main' ? 'Вместо фона сейчас цвет фона проекта. Чтобы подставить свою картинку, перетащите этот клип на дорожку «Наложение», а картинку положите на основную.' : 'Теперь под человеком видно то, что лежит ниже на таймлайне.' });
 }
 
 export function restoreOriginal(clipId: string, source?: string) {

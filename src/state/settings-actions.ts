@@ -1,6 +1,7 @@
 // Сохранение настроек и применение темы оформления.
 import { api } from '../api';
-import { defaultLayout, type Layout, type Settings } from '../../shared/settings';
+import { defaultLayout, type Layout, type PaneId, type Settings } from '../../shared/settings';
+import { docksOf, homeTarget, movePane } from '../../shared/layout';
 import { get, set } from './store';
 
 export async function loadSettings() {
@@ -46,4 +47,13 @@ export const layoutOf = (s: Settings): Layout => ({ ...defaultLayout(), ...(s.la
 
 export function saveLayout(patch: Partial<Layout>) {
   return saveSettings({ layout: { ...layoutOf(get().settings), ...patch } });
+}
+
+// Открепить панель в отдельное окно посреди программы (или вернуть на место, если уже плавает)
+export function floatPane(id: PaneId) {
+  const L = layoutOf(get().settings);
+  if (docksOf(L).float[id]) return saveLayout(movePane(L, id, homeTarget(L, id)));
+  const w = id === 'files' ? L.side : id === 'inspector' ? L.right : L.assistant;
+  const h = Math.min(640, window.innerHeight - 160);
+  return saveLayout(movePane(L, id, { float: { x: Math.round((window.innerWidth - w) / 2), y: 90, w, h } }));
 }

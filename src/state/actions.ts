@@ -1,6 +1,7 @@
 // Действия редактора. Их вызывают кнопки, горячие клавиши, ИИ-помощник и внешний ИИ по MCP.
 import { api } from '../api';
 import type { Clip, ExportOptions, MediaClip, MediaItem, Project, TextClip, TextStyle, Track, TrackKind, TransitionType } from '../../shared/types';
+import { setKeyAt } from '../../shared/keyframes';
 import {
   clipDuration, clipEnd, findClip, FORMAT_PRESETS, layoutProject, makeMediaClip, makeTextClip, mainTrack,
   mediaById, MIN_CLIP, newProject, projectDuration, uid, defaultTextStyle,
@@ -372,7 +373,10 @@ export function updateMediaClip(id: string, patch: MediaClipPatch, label: string
     const c = findClip(p, id)!.clip as MediaClip;
     const { transform, transformEnd, color, effects, ...rest } = patch;
     Object.assign(c, rest);
-    if (transform) c.transform = deepMerge(c.transform, transform);
+    // у клипа есть ключевые кадры — изменение положения/размера ставит ключ там, где курсор
+    if (transform && c.keys?.length && !patch.keys) c.keys = setKeyAt(c, get().playhead - c.start, transform);
+    else if (transform) c.transform = deepMerge(c.transform, transform);
+    if (c.keys && !c.keys.length) delete c.keys;
     if (transformEnd) c.transformEnd = deepMerge(c.transformEnd, transformEnd);
     if (color) c.color = deepMerge(c.color, color);
     if (effects) c.effects = deepMerge(c.effects, effects);

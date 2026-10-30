@@ -65,7 +65,16 @@ export interface Layout {
   assistant: number; // ширина ИИ-помощника, px
   timeline: number; // высота таймлайна, px
   swap: boolean; // медиатека справа, настройки слева
+  // Свободные окна (с 0.4): какие панели пристыкованы слева и справа (по порядку слева направо)
+  // и какие плавают поверх. Если пусто — раскладка берётся из swap, как в 0.3.
+  dockLeft?: PaneId[];
+  dockRight?: PaneId[];
+  float?: Partial<Record<PaneId, FloatRect>>;
+  rail?: 'left' | 'right'; // где кнопки медиатеки, когда сама панель плавает
 }
+
+export type PaneId = 'files' | 'inspector' | 'assistant';
+export interface FloatRect { x: number; y: number; w: number; h: number }
 
 export const defaultLayout = (): Layout => ({ side: 320, right: 340, assistant: 360, timeline: 300, swap: false });
 

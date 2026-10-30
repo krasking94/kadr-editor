@@ -1,5 +1,6 @@
 // Настройки: оформление, нейросети (ключи и модели), MCP, экспорт, клавиши, о программе.
 import { defaultLayout } from '../../shared/settings';
+import { mirror } from '../../shared/layout';
 import { useEffect, useState } from 'react';
 import { AudioLines, Bot, CheckCircle2, Copy, Cpu, ExternalLink, ImagePlus, Info, Keyboard, KeyRound, Loader2, Palette, Play, Plug, Plus, RefreshCw, Server, Settings as Gear, Trash2 } from 'lucide-react';
 import { ELEVEN_TTS_MODELS, IMAGE_PROVIDERS, imageProvider, type Voice } from '../../shared/generators';
@@ -74,12 +75,12 @@ function General() {
       <Switch label="Прилипание клипов на таймлайне" checked={s.snapping} onChange={v => saveSettings({ snapping: v })} />
       <Switch label="Показывать подсказки для новичков" checked={s.showTips} onChange={v => saveSettings({ showTips: v })} />
       <div className="field"><label>Расположение панелей</label>
-        <Segmented value={layoutOf(s).swap ? 'swap' : 'normal'} onChange={v => saveLayout({ swap: v === 'swap' })} options={[
+        <Segmented value={layoutOf(s).swap ? 'swap' : 'normal'} onChange={v => { if ((v === 'swap') !== layoutOf(s).swap) saveLayout(mirror(layoutOf(s))); }} options={[
           { value: 'normal', label: 'Файлы слева', tip: 'Медиатека слева, настройки клипа и ИИ справа' },
           { value: 'swap', label: 'Файлы справа', tip: 'Медиатека справа, настройки клипа и ИИ слева' },
         ]} />
-        <div className="small-text muted">Ширину любой панели можно менять, потянув мышкой за её край. Двойной щелчок по краю — как было.</div>
-        <button className="btn small ghost" style={{ alignSelf: 'flex-start' }} onClick={() => saveSettings({ layout: defaultLayout() })}>Вернуть панели как было</button>
+        <div className="small-text muted">Ширину любой панели можно менять, потянув мышкой за её край. Двойной щелчок по краю — как было. Панель можно открепить: потяните за её заголовок и отпустите где угодно — она станет отдельным окном. Подтащите к краю программы, и она пристыкуется.</div>
+        <button className="btn small ghost" style={{ alignSelf: 'flex-start' }} onClick={() => saveSettings({ layout: defaultLayout() })}>Вернуть окна как было</button>
       </div>
       <Switch label="Лёгкие копии для тяжёлых видео (4K)" checked={s.proxy !== 'off'} onChange={v => saveSettings({ proxy: v ? 'auto' : 'off' })}
         hint="Пока вы монтируете, показывается лёгкая копия 540p, и просмотр не тормозит. Сохраняется всегда оригинал в полном качестве." />

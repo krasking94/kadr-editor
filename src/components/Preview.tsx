@@ -264,7 +264,9 @@ function startLayerDrag(e: React.PointerEvent, c: MediaClip, W: number, H: numbe
   const s = useStore.getState();
   if (!s.selection.includes(c.id)) set({ selection: [c.id] });
   const startX = e.clientX, startY = e.clientY;
-  const t0 = { ...c.transform };
+  // с ключевыми кадрами тянем от того места, где клип сейчас, — ключ поставится под курсором
+  const keyed = !!c.keys?.length;
+  const t0 = keyed ? transformAt(c, s.playhead - c.start) : { ...c.transform };
   const te0 = { ...c.transformEnd };
   const path0 = c.path ? c.path.map(q => ({ ...q })) : null;
   let moved = false;
@@ -278,7 +280,7 @@ function startLayerDrag(e: React.PointerEvent, c: MediaClip, W: number, H: numbe
     if (Math.abs(ny - 0.5) < 0.012) ny = 0.5;
     updateMediaClip(c.id, {
       transform: { x: nx, y: ny },
-      ...(c.animate ? { transformEnd: { x: te0.x + (nx - t0.x), y: te0.y + (ny - t0.y) } } : {}),
+      ...(c.animate && !keyed ? { transformEnd: { x: te0.x + (nx - t0.x), y: te0.y + (ny - t0.y) } } : {}),
       // при слежении за лицом сдвигаем весь путь камеры
       ...(path0 ? { path: path0.map(q => ({ t: q.t, x: q.x + (nx - t0.x), y: q.y + (ny - t0.y) })) } : {}),
     }, 'Положение изменено', { coalesce: 'drag:' + c.id });

@@ -18,7 +18,8 @@ export interface MediaItem {
   waveform?: number[]; // пики 0..1
   missing?: boolean;
   transcript?: Transcript; // распознанная речь всего файла (время слов — от начала файла)
-  proxy?: string; // лёгкая копия для плавного просмотра; сохранение всегда идёт из оригинала
+  proxy?: string;
+  alpha?: boolean; // у видео прозрачный фон (WebM VP9 с альфа-каналом) // лёгкая копия для плавного просмотра; сохранение всегда идёт из оригинала
 }
 
 export interface Transcript {
@@ -94,7 +95,14 @@ export interface MediaClip {
   voice?: boolean; // «голос как в студии»: тембр, выравнивание громкости
   key?: ChromaKey; // убрать фон заданного цвета (хромакей)
   path?: PathPoint[]; // движение центра слоя по точкам (слежение за лицом), время от начала клипа
+  keys?: Keyframe[]; // ключевые кадры (если есть, заменяют transform/animate)
   origin?: ClipOrigin; // клип сделан из обработанной копии файла (стабилизация, задом наперёд)
+}
+
+// Ключевой кадр: состояние слоя в момент t (секунды от начала клипа на таймлайне)
+export interface Keyframe extends Transform {
+  t: number;
+  ease?: 'smooth' | 'linear'; // как двигаться к следующему ключу: плавно (по умолчанию) или ровно
 }
 
 export interface ChromaKey {
@@ -113,7 +121,7 @@ export interface ClipOrigin {
   mediaId: string;
   in: number;
   out: number;
-  done: ('stabilize' | 'reverse')[];
+  done: ('stabilize' | 'reverse' | 'nobg')[];
 }
 
 export interface Word {

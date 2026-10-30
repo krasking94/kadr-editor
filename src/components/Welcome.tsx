@@ -1,6 +1,6 @@
 // Стартовый экран: выбрать формат нового ролика, открыть недавний проект или пример.
 import { useEffect, useState } from 'react';
-import { Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, Plug, Settings, Sparkles, Undo2, Wand2, X, ScrollText, Smartphone } from 'lucide-react';
+import { Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, Plug, Settings, Sparkles, Undo2, Wand2, X, ScrollText, Smartphone, AppWindow, Diamond, Mic2, ScanFace } from 'lucide-react';
 import { api } from '../api';
 import { FORMAT_PRESETS } from '../../shared/timeline';
 import { set, toast, useStore } from '../state/store';
@@ -16,8 +16,12 @@ const FEATURES = [
   { icon: Undo2, title: 'Ничего не страшно', text: 'Любой шаг отменяется. История шагов показывает, кто и что изменил.' },
   { icon: ScrollText, title: 'Монтаж через текст', text: 'Удалили фразу в тексте — она вырезана из видео. Паузы и «эээ» убираются одной кнопкой.' },
   { icon: Smartphone, title: 'Shorts из длинного видео', text: 'ИИ находит лучшие моменты и делает вертикальные ролики с субтитрами и лицом в центре.' },
+  { icon: AppWindow, title: 'Окна как вам удобно', text: 'Любую панель можно оторвать, поставить где угодно или пристыковать к краю.' },
+  { icon: Diamond, title: 'Ключевые кадры и фон', text: 'Плавное движение по ключам и удаление фона без зелёного экрана — прямо на компьютере.' },
   { icon: Captions, title: 'Субтитры из речи', text: 'Распознавание речи и красивые подписи в один клик.' },
   { icon: Wand2, title: 'Цвет и эффекты', text: '10 готовых стилей, яркость, контраст, виньетка, плёнка, плавное приближение.' },
+  { icon: Mic2, title: 'Голос как в студии', text: 'Шумоподавление и ровная громкость одной кнопкой, музыка тише под речь.' },
+  { icon: ScanFace, title: 'Вертикаль с лицом', text: 'Видео 16:9 становится 9:16, а «камера» сама держит человека в кадре.' },
   { icon: Layers, title: 'Слои и переходы', text: 'Картинка в картинке, 19 переходов, текст с анимацией, музыка с приглушением под голос.' },
 ];
 

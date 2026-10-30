@@ -97,7 +97,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'update_clip', title: 'Меняю настройки клипа',
-    description: 'Change settings of a media clip: speed (0.1..8), volume (0..2), mute, fades, fit mode, position/scale/rotation/opacity (transform), Ken Burns style animation (animate + transform_end), color correction, effects, music ducking.',
+    description: 'Change settings of a media clip: speed (0.1..8), volume (0..2), mute, fades, fit mode, position/scale/rotation/opacity (transform), Ken Burns style animation (animate + transform_end), keyframes (any number of position/scale/rotation/opacity states at given moments, smoothly interpolated), color correction, effects, music ducking. If the clip has keyframes, `transform` edits the keyframe at the playhead.',
     inputSchema: obj({
       clip_id: str('Clip id'),
       speed: num('Playback speed, 1 = normal'),
@@ -109,6 +109,11 @@ export const TOOLS: ToolDef[] = [
       transform: transformSchema,
       animate: bool('Animate from transform to transform_end over the clip'),
       transform_end: transformSchema,
+      keyframes: {
+        type: 'array',
+        description: 'Replace all keyframes. Each: time in seconds from the clip start on the timeline, plus any of x, y, scale, rotation, opacity (missing values are taken from the clip transform). ease: smooth (default, eases in/out) or linear, applies to the move towards the next keyframe. Empty array removes keyframes.',
+        items: obj({ time: num('Seconds from clip start'), x: num('0..1'), y: num('0..1'), scale: num('1 = fit'), rotation: num('Degrees'), opacity: num('0..1'), ease: str('Motion to next key', ['smooth', 'linear']) }, ['time']),
+      },
       color: obj({
         preset: str('Look', ['none', 'bw', 'sepia', 'vintage', 'warm', 'cold', 'cinema', 'vivid', 'fade', 'cross']),
         brightness: num('-1..1, 0 = unchanged'), contrast: num('0..2, 1 = unchanged'),
@@ -187,6 +192,11 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'reverse_clip', title: 'Разворачиваю клип',
     description: 'Make a media clip play backwards (video and audio). Creates a processed copy and switches the clip to it.',
+    inputSchema: obj({ clip_id: str('Media clip id') }, ['clip_id']),
+  },
+  {
+    name: 'remove_background', title: 'Убираю фон',
+    description: 'Remove the background behind people in a video clip without a green screen (offline person segmentation). Creates a copy with a transparent background and switches the clip to it; whatever is on lower tracks shows through. Best on the overlay (video) track above a new background.',
     inputSchema: obj({ clip_id: str('Media clip id') }, ['clip_id']),
   },
   {
@@ -382,7 +392,7 @@ Rules:
 - Use get_frame to check how the result looks when visual quality matters.
 - Never invent file paths; ask the user or use media already in the library.
 - For Reels/Shorts/TikTok prefer auto_reframe (keeps the face in frame) and make_subtitles with style "blogger".
-- For bad sound use studio_voice; for "эээ" and filler words use remove_fillers; for shaky video use stabilize_clip.
+- For bad sound use studio_voice; for "эээ" and filler words use remove_fillers; for shaky video use stabilize_clip; to cut a person out of the background without a green screen use remove_background (chroma key via update_clip.key only for real green/blue screens).
 - When asked for chapters, a description or hashtags, base them on the transcript (transcribe) and answer in text; add markers only if the user asks.
 - To remove specific phrases, repeats, mistakes or off-topic talk, use get_transcript then cut_transcript (text-based editing).
 - To turn a long video into Reels/Shorts use find_shorts then make_shorts. For music videos use beat_sync.`;
