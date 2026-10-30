@@ -169,7 +169,7 @@ export async function execTool(name: string, a: any, source: string): Promise<To
       const format = a.format || 'mp4';
       const info = get().info;
       const path = a.path || `${info?.videosDir || ''}/${p.name.replace(/[\\/:*?"<>|]+/g, '_')} ${new Date().toLocaleTimeString('ru').replace(/:/g, '-')}.${format}`;
-      const res = await A.exportVideo({ outPath: path, format, width: p.width, height: p.height, fps: p.fps, quality: a.quality || 'good', encoder: 'auto', rangeStart: a.range_start, rangeEnd: a.range_end }, source);
+      const res = await A.exportVideo({ outPath: path, format, width: p.width, height: p.height, fps: p.fps, quality: a.quality || 'good', encoder: 'auto', rangeStart: a.range_start, rangeEnd: a.range_end, loudness: get().settings.loudness || undefined }, source);
       return res.ok ? ok('Saved', { path: res.outPath, seconds: res.seconds }) : { text: res.error || 'Export failed', isError: true };
     }
     default:

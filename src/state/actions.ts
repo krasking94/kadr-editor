@@ -7,7 +7,7 @@ import {
 } from '../../shared/timeline';
 import { renderTextPngs } from '../lib/text-render';
 import { loadFonts } from '../lib/fonts';
-import { askConfirm, commit, endTask, get, patchMediaCache, set, startTask, toast, updateTask } from './store';
+import { askConfirm, commit, endTask, get, patchMediaCache, set, startTask, toast, updateTask, type QueueItem } from './store';
 
 const deepMerge = <T extends object>(base: T, patch: Partial<T> | undefined): T => ({ ...base, ...(patch || {}) });
 
@@ -674,9 +674,11 @@ export async function renderFrame(time: number, width = 960): Promise<string> {
   return api.renderFrame(small, await textRenders(small), time, width);
 }
 
-export async function exportVideo(opts: ExportOptions, source?: string): Promise<{ ok: boolean; outPath?: string; error?: string; canceled?: boolean; seconds?: number }> {
+type ExportResult = { ok: boolean; outPath?: string; error?: string; canceled?: boolean; seconds?: number };
+
+export async function exportVideo(opts: ExportOptions, source?: string, snap?: { project: Project; texts: Awaited<ReturnType<typeof textRenders>> }): Promise<ExportResult> {
   const s = get();
-  const p = projectForRender(s.project!);
+  const p = snap?.project ?? projectForRender(s.project!);
   if (projectDuration(p) <= 0) {
     toast('info', 'Таймлайн пуст: добавьте видео, фото или текст');
     return { ok: false, error: 'Пустой таймлайн' };
@@ -689,7 +691,7 @@ export async function exportVideo(opts: ExportOptions, source?: string): Promise
     api.taskbarProgress(ev.progress);
   });
   try {
-    const res = await api.exportStart(jobId, p, await textRenders(p), opts);
+    const res: ExportResult = await api.exportStart(jobId, p, snap?.texts ?? await textRenders(p), opts);
     if (res.ok) toast('success', 'Видео готово!', {
       detail: res.outPath, ttl: 12000,
       action: { label: 'Показать в папке', run: () => api.showItem(res.outPath!) },
@@ -702,6 +704,54 @@ export async function exportVideo(opts: ExportOptions, source?: string): Promise
     off();
     endTask(task);
     api.taskbarProgress(-1);
+  }
+}
+
+// ── Очередь сохранения: ролик запоминается таким, какой он сейчас, и сохраняется по очереди ──
+const queued = new Map<string, { opts: ExportOptions; project: Project; texts: Awaited<ReturnType<typeof textRenders>> }>();
+let pumping = false;
+
+export async function queueExport(opts: ExportOptions): Promise<void> {
+  const p = projectForRender(get().project!);
+  if (projectDuration(p) <= 0) { toast('info', 'Таймлайн пуст: добавьте видео, фото или текст'); return; }
+  const id = 'q' + Date.now() + Math.random().toString(36).slice(2, 5);
+  queued.set(id, { opts, project: p, texts: await textRenders(p) });
+  const name = opts.outPath.split(/[\\/]/).pop() || opts.outPath;
+  set(s => ({ exportQueue: [...s.exportQueue, { id, name, outPath: opts.outPath, state: 'wait' }] }));
+  toast('success', 'Добавлено в очередь сохранения', { detail: name });
+  pumpQueue();
+}
+
+function patchQueue(id: string, patch: Partial<QueueItem>) {
+  set(s => ({ exportQueue: s.exportQueue.map(q => (q.id === id ? { ...q, ...patch } : q)) }));
+}
+
+export function removeFromQueue(id: string) {
+  queued.delete(id);
+  set(s => ({ exportQueue: s.exportQueue.filter(q => q.id !== id || q.state === 'run') }));
+}
+
+export function clearFinishedQueue() {
+  set(s => ({ exportQueue: s.exportQueue.filter(q => q.state === 'wait' || q.state === 'run') }));
+}
+
+async function pumpQueue() {
+  if (pumping) return;
+  pumping = true;
+  try {
+    for (;;) {
+      const next = get().exportQueue.find(q => q.state === 'wait' && queued.has(q.id));
+      if (!next) break;
+      const job = queued.get(next.id)!;
+      queued.delete(next.id);
+      patchQueue(next.id, { state: 'run' });
+      const res = await exportVideo(job.opts, undefined, job);
+      patchQueue(next.id, { state: res.ok ? 'done' : res.canceled ? 'canceled' : 'error', error: res.error });
+    }
+    const q = get().exportQueue;
+    if (q.length > 1 && q.every(i => i.state !== 'wait' && i.state !== 'run')) toast('success', 'Очередь сохранения закончена', { detail: `Готово: ${q.filter(i => i.state === 'done').length} из ${q.length}` });
+  } finally {
+    pumping = false;
   }
 }
 
