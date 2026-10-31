@@ -61,7 +61,22 @@ export interface Settings {
     port: number;
     clients: McpClientConfig[];
   };
+  // с 0.9
+  publish: PublishSettings;
+  reports: { url: string; auto: boolean }; // куда отправлять отчёты об ошибках (пусто — только сохранять на компьютере)
+  prompter: { text: string; speed: number; size: number; mirror: boolean };
 }
+
+export interface PublishSettings {
+  telegramChat: string; // @канал или числовой id чата
+  youtubeClientId: string; // клиент OAuth Google «для компьютера»
+  youtubePrivacy: 'private' | 'unlisted' | 'public';
+  vkAppId: string; // ID Standalone-приложения ВК
+  vkGroupId: string; // сообщество, куда загружать (пусто — на свою страницу)
+}
+
+export const defaultPublish = (): PublishSettings => ({ telegramChat: '', youtubeClientId: '', youtubePrivacy: 'private', vkAppId: '', vkGroupId: '' });
+export const defaultPrompter = () => ({ text: '', speed: 1, size: 56, mirror: false });
 
 export interface Brand {
   name: string; // название канала или компании, например @мой_канал
@@ -117,4 +132,7 @@ export const defaultSettings = (): Settings => ({
   ai: { provider: 'anthropic', providers: {}, speechProvider: 'openai', speechModel: 'whisper-1', speechLanguage: 'ru' },
   gen: { imageProvider: 'openai', imageModels: {}, imageBaseUrl: '', imageAspect: 'auto', voiceId: '', voiceName: '', ttsModel: 'eleven_v4', videoModel: 'fal-ai/kling-video/v2.5-turbo/pro/text-to-video', videoImageModel: 'fal-ai/kling-video/v2.5-turbo/pro/image-to-video', videoDuration: 5 },
   mcp: { serverEnabled: true, port: 7788, clients: [] },
+  publish: defaultPublish(),
+  reports: { url: '', auto: false },
+  prompter: defaultPrompter(),
 });

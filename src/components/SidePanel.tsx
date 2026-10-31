@@ -582,6 +582,9 @@ function RecordPanel() {
             : mode === 'cam' ? 'Запишите себя на камеру — видео встанет в конец ролика.'
               : 'Запишите экран или окно программы: для уроков, обзоров и инструкций. Можно сразу говорить в микрофон. Во время записи сверните «Хлопушка», а потом вернитесь и нажмите «Остановить».'}</div>
         </div>
+        {mode === 'cam' && state !== 'rec' && (
+          <button className="btn" data-tip="Текст крупно плывёт рядом с камерой — читаете и смотрите почти в объектив" onClick={() => { release(); setState('idle'); set({ prompter: true, playing: false }); }}><ScrollText size={15} /> Записать с телесуфлёром</button>
+        )}
         {mode === 'screen' && state === 'idle' && !sources && <>
           <Switch label="Звук компьютера" checked={sysAudio} onChange={setSysAudio} hint="Всё, что слышно в колонках: видео, игра, звонок" />
           <Switch label="Мой голос (микрофон)" checked={withMic} onChange={setWithMic} />
@@ -639,6 +642,11 @@ function AiPanel() {
     <>
       <div className="panel-head"><Sparkles size={16} /><h3>ИИ-инструменты</h3></div>
       <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="card" style={{ borderColor: 'var(--accent-line)' }}>
+          <div className="row"><WandSparkles size={16} color="var(--accent)" /><b>Собери ролик сам</b><span className="badge accent">новое</span></div>
+          <div className="small-text muted">Отметьте сырые записи и скажите, что нужно. Нейросеть выберет лучшие моменты, поставит их по порядку и добавит субтитры, заголовок и музыку.</div>
+          <button className="btn primary" onClick={() => set({ dialog: 'draft' })}><WandSparkles size={14} /> Собрать черновик</button>
+        </div>
         <div className="card">
           <div className="row"><Scissors size={16} color="var(--accent)" /><b>Убрать паузы</b></div>
           <div className="small-text muted">Находит молчание в речи и вырезает его. Работает без интернета.</div>

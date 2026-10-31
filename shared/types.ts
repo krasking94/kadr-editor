@@ -118,6 +118,42 @@ export interface MediaClip {
   smooth?: boolean; // плавное замедление: программа дорисовывает недостающие кадры
   faces?: FaceBlur; // размытие лиц
   eq?: AudioEq; // эквалайзер и компрессор
+  // с 0.9
+  track?: ObjectTrack; // слежение за объектом: где объект в кадре исходника
+  follow?: Follow; // слой едет за объектом, найденным в другом клипе
+  cam?: CamRef; // клип мультикамеры: какая камера сейчас в кадре
+  group?: ClipGroup; // вложенный клип: собран из нескольких клипов, можно разобрать обратно
+}
+
+// Слежение за объектом: рамка объекта по времени исходника (доли кадра исходника)
+export interface ObjectTrack {
+  samples: { t: number; x: number; y: number; w: number; h: number }[];
+  label?: string;
+}
+
+// Слой (текст, картинка) повторяет движение объекта из клипа clipId
+export interface Follow {
+  clipId: string;
+}
+
+export interface CamRef {
+  group: string; // id группы мультикамеры в project.multicam
+  angle: number; // номер камеры в группе, с 0
+}
+
+export interface MulticamGroup {
+  id: string;
+  name: string;
+  // offset: на сколько секунд время этой камеры впереди камеры 1 (камера 1 — отсчёт, offset = 0)
+  angles: { mediaId: string; offset: number; label?: string }[];
+  audio: number; // с какой камеры брать звук; -1 — с той, что сейчас в кадре
+}
+
+// Вложенный клип: исходные клипы лежат внутри, чтобы «Разобрать» вернул всё как было
+export interface ClipGroup {
+  start: number; // где начинался кусок на таймлайне в момент сборки
+  main: MediaClip[]; // клипы основной дорожки по порядку
+  layers: { trackId: string; kind: TrackKind; name: string; clips: Clip[] }[]; // клипы других дорожек (время — как было)
 }
 
 export type BlendMode = 'normal' | 'screen' | 'multiply' | 'overlay' | 'softlight' | 'lighten' | 'darken' | 'difference' | 'add';
@@ -167,7 +203,14 @@ export interface ClipOrigin {
   mediaId: string;
   in: number;
   out: number;
-  done: ('stabilize' | 'reverse' | 'nobg')[];
+  done: ('stabilize' | 'reverse' | 'nobg' | 'ramp')[];
+  ramp?: { points: RampPoint[]; mediaId: string; in: number; out: number }; // плавная смена скорости и из чего она сделана
+}
+
+// Точка кривой скорости: u — доля исходного отрезка (0 — начало, 1 — конец), s — скорость (1 = обычная)
+export interface RampPoint {
+  u: number;
+  s: number;
 }
 
 export interface Word {
@@ -211,6 +254,8 @@ export interface TextClip {
   subtitle?: boolean;
   words?: Word[]; // слова со временем — для субтитров «слово за словом»
   highlight?: string; // цвет произносимого слова (если есть words)
+  follow?: Follow; // текст едет за объектом (с 0.9)
+  path?: PathPoint[]; // рассчитанный сдвиг текста по времени клипа (доли кадра) — только для просмотра и экспорта
 }
 
 export type Clip = MediaClip | TextClip;
@@ -246,6 +291,7 @@ export interface Project {
   media: MediaItem[];
   tracks: Track[]; // снизу вверх по слоям: [0] — главная дорожка
   markers: Marker[];
+  multicam?: MulticamGroup[]; // группы мультикамеры (с 0.9)
   createdAt: number;
   updatedAt: number;
 }

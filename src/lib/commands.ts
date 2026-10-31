@@ -13,6 +13,10 @@ import { smartPaste } from '../state/paste';
 import { startTour } from '../components/Tour';
 import { defaultLayout } from '../../shared/settings';
 import { mirror } from '../../shared/layout';
+import { groupClips, ungroupClip } from '../state/group';
+import { camClipAt, switchCamera } from '../state/multicam';
+import { startPick } from '../state/track';
+import { openPrompter } from '../components/Prompter';
 
 export interface Command {
   id: string;
@@ -55,6 +59,8 @@ export const COMMANDS: Command[] = [
   { id: 'export', label: 'Сохранить видео…', group: 'Файл', keys: ['Ctrl+E'], needsProject: true, run: () => set({ dialog: 'export' }) },
   { id: 'snapshot', label: 'Сохранить текущий кадр как картинку', group: 'Файл', needsProject: true, run: () => window.dispatchEvent(new Event('kadr:snapshot')) },
   { id: 'cover', label: 'Обложка для ролика…', group: 'Файл', needsProject: true, run: () => set({ dialog: 'cover' }), hint: 'Кадр и крупный текст — картинка для YouTube или Reels' },
+  { id: 'preflight', label: 'Проверить ролик перед публикацией', group: 'Файл', keys: ['Ctrl+Shift+E'], needsProject: true, run: () => set({ dialog: 'preflight' }), hint: 'Громкость, обрезанные надписи, чёрные куски, музыка в конце' },
+  { id: 'publish', label: 'Опубликовать в YouTube, ВК, Telegram…', group: 'Файл', keys: ['Ctrl+Shift+U'], needsProject: true, run: () => set({ dialog: 'publish' }) },
   { id: 'close', label: 'Закрыть проект', group: 'Файл', needsProject: true, run: () => A.closeProject() },
 
   // Правка
@@ -80,6 +86,12 @@ export const COMMANDS: Command[] = [
   } },
   { id: 'text', label: 'Добавить текст', group: 'Клип', keys: ['T'], needsProject: true, run: () => { A.addText('Ваш текст'); set({ inspectorTab: 'text' }); } },
   { id: 'marker', label: 'Поставить метку', group: 'Клип', keys: ['M'], needsProject: true, run: () => A.addMarker(get().playhead) },
+  { id: 'group', label: 'Объединить в один клип', group: 'Клип', keys: ['Ctrl+G'], needsProject: true, hint: 'Выбранные клипы и всё, что над ними, станут одним клипом', run: needSel(ids => { groupClips(ids).catch(() => undefined); }) },
+  { id: 'ungroup', label: 'Разобрать вложенный клип', group: 'Клип', keys: ['Ctrl+Shift+G'], needsProject: true, run: needSel(ids => { ungroupClip(ids[0]); }) },
+  { id: 'track', label: 'Следить за объектом…', group: 'Клип', needsProject: true, hint: 'Обведите предмет — надпись или размытие поедут за ним', run: needSel(ids => startPick(ids[0])) },
+  { id: 'multicam', label: 'Мультикамера: собрать из нескольких камер…', group: 'Клип', needsProject: true, run: () => set({ dialog: 'multicam' }) },
+  ...[0, 1, 2, 3, 4, 5].map((i): Command => ({ id: `cam-${i + 1}`, label: i ? `Камера ${i + 1}` : 'Мультикамера: камера 1 (клавиши 1–6)', group: 'Клип', keys: [String(i + 1)], needsProject: true, hint: 'Мультикамера: переключить с этого места', run: () => { switchCamera(i); } })),
+  { id: 'prompter', label: 'Телесуфлёр: записать себя по тексту', group: 'Клип', needsProject: true, run: openPrompter },
   { id: 'detach', label: 'Отделить звук от видео', group: 'Клип', needsProject: true, run: needSel(ids => A.detachAudio(ids[0])) },
   { id: 'freeze', label: 'Стоп-кадр', group: 'Клип', needsProject: true, run: needSel(ids => A.freezeFrame(ids[0])) },
   { id: 'speed-up', label: 'Ускорить клип ×2', group: 'Клип', needsProject: true, run: needSel(ids => ids.forEach(id => {
@@ -121,6 +133,7 @@ export const COMMANDS: Command[] = [
 
   // ИИ
   { id: 'assistant', label: 'ИИ-помощник', group: 'ИИ', keys: ['Ctrl+J'], run: () => set(s => ({ assistantOpen: !s.assistantOpen })) },
+  { id: 'draft', label: 'Собери ролик сам: черновик из сырых записей', group: 'ИИ', needsProject: true, run: () => set({ dialog: 'draft' }) },
   { id: 'silence', label: 'Убрать паузы в речи', group: 'ИИ', needsProject: true, run: () => A.removeSilence() },
   { id: 'subs', label: 'Субтитры из речи', group: 'ИИ', needsProject: true, run: () => A.transcribeProject({ addSubs: true }).catch(() => undefined) },
   { id: 'scenes', label: 'Разрезать видео по сменам сцен', group: 'ИИ', needsProject: true, run: () => {
@@ -167,6 +180,7 @@ export const COMMANDS: Command[] = [
   { id: 'shortcuts', label: 'Горячие клавиши', group: 'Помощь', keys: ['F1', 'Shift+/'], run: () => set({ dialog: 'shortcuts' }) },
   { id: 'devtools', label: 'Инструменты разработчика', group: 'Помощь', keys: ['Ctrl+Shift+I'], run: () => api.devtools() },
   { id: 'site', label: 'Страница программы на GitHub', group: 'Помощь', run: () => api.openExternal('https://github.com/krasking94/kadr-editor') },
+  { id: 'reports', label: 'Отчёты об ошибках', group: 'Помощь', run: () => set({ dialog: 'settings', settingsTab: 'reports' }) },
   { id: 'issue', label: 'Сообщить об ошибке', group: 'Помощь', run: () => api.openExternal('https://github.com/krasking94/kadr-editor/issues/new') },
   { id: 'about', label: 'О программе', group: 'Помощь', run: () => set({ dialog: 'settings', settingsTab: 'about' }) },
 ];
@@ -213,6 +227,8 @@ export function handleKey(e: KeyboardEvent): boolean {
   if (!cmd) return false;
   if (cmd.needsProject && (!s.project || s.screen !== 'editor')) return false;
   if (cmd.id === 'deselect' && !s.selection.length && s.tool === 'select') return false;
+  // цифры переключают камеры, только когда под линией времени мультикамера
+  if (cmd.id.startsWith('cam-') && !camClipAt(s.playhead)) return false;
   // Ctrl+V не перехватываем: событие «вставить» несёт файлы и картинки из буфера (см. smartPaste)
   if (cmd.id === 'paste') return false;
   e.preventDefault();

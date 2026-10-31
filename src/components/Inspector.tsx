@@ -21,6 +21,7 @@ import { FONTS } from '../lib/fonts';
 import { keysOf, prettyKeys } from '../lib/commands';
 import { keysOf as clipKeys, KEY_SNAP, removeKey, setKeyAt } from '../../shared/keyframes';
 import { ColorInput, ColorWheel, Segmented, Slider, Switch } from './ui';
+import { FollowSection, GroupButton, GroupSection, MulticamSection, RampSection, TrackSection } from './InspectorV09';
 
 export function Inspector() {
   const project = useStore(s => s.project)!;
@@ -142,6 +143,7 @@ function MultiInspector({ ids }: { ids: string[] }) {
         )}
         <div className="insp-section">
           <div className="row wrap">
+            <GroupButton ids={ids} />
             <button className="btn small" onClick={() => A.duplicateClips(ids)}>Дублировать</button>
             <button className="btn small danger" onClick={() => A.deleteClips(ids)}><Trash2 size={13} /> Удалить все</button>
           </div>
@@ -195,6 +197,8 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
         {tab === 'main' && adj && <AdjustMain clip={clip} up={up} />}
         {tab === 'main' && !adj && (
           <>
+            <MulticamSection clip={clip} />
+            <GroupSection clip={clip} />
             <div className="insp-section">
               <h4><Gauge size={14} /> Скорость</h4>
               <div className="row wrap" style={{ gap: 5 }}>
@@ -239,7 +243,9 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
               <Slider label="Плавное появление" value={clip.fadeIn} min={0} max={3} step={0.05} def={0} unit=" с" onChange={v => up({ fadeIn: v }, 'Плавное появление')} />
               <Slider label="Плавное исчезновение" value={clip.fadeOut} min={0} max={3} step={0.05} def={0} unit=" с" onChange={v => up({ fadeOut: v }, 'Плавное исчезновение')} />
             </div>
+            {m?.kind === 'video' && !clip.cam && <RampSection key={'ramp' + clip.id} clip={clip} />}
             {m?.kind === 'video' && <ProcessSection clip={clip} />}
+            {trackKind === 'video' && <FollowSection clip={clip} />}
             <div className="insp-section" style={{ borderBottom: 0 }}>
               <div className="row wrap">
                 {m?.kind === 'video' && <button className="btn small" onClick={() => A.freezeFrame(clip.id)}><Snowflake size={13} /> Стоп-кадр</button>}
@@ -299,6 +305,7 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
             {!adj && m?.kind === 'video' && <FacesSection clip={clip} up={up} />}
           </div>
         )}
+        {tab === 'motion' && m?.kind === 'video' && <TrackSection clip={clip} />}
         {tab === 'motion' && <MotionTab clip={clip} up={up} />}
         {tab === 'audio' && (
           <div className="insp-section">
@@ -585,7 +592,7 @@ function ProcessSection({ clip }: { clip: MediaClip }) {
       </div>
       {clip.origin && (
         <div className="row wrap" style={{ gap: 6 }}>
-          <span className="small-text muted">Сейчас: {done.length ? done.map(d => (d === 'stabilize' ? 'без тряски' : d === 'nobg' ? 'без фона' : 'задом наперёд')).join(', ') : 'обработанная копия'}</span>
+          <span className="small-text muted">Сейчас: {done.length ? done.map(d => (d === 'stabilize' ? 'без тряски' : d === 'nobg' ? 'без фона' : d === 'ramp' ? 'скорость по кривой' : 'задом наперёд')).join(', ') : 'обработанная копия'}</span>
           <button className="btn small ghost" onClick={() => S.restoreOriginal(clip.id)}><Undo2 size={13} /> Вернуть оригинал</button>
         </div>
       )}
@@ -655,6 +662,7 @@ function TextInspector({ clip }: { clip: TextClip }) {
             </div>
           </div>
         )}
+        {tab === 'text' && !clip.subtitle && <FollowSection clip={clip} />}
         {tab === 'style' && (
           <>
             <div className="insp-section">

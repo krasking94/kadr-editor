@@ -119,6 +119,23 @@ const api = {
   onMcpClient: on('mcp:client'),
   onMcpClients: on('mcp:clients'),
 
+  // 0.9
+  renderPart: call('media:render-part'),
+  syncAudio: call('media:sync-audio'),
+  preflight: call('media:preflight'),
+  crashList: call('crash:list'),
+  crashText: call('crash:text'),
+  crashReport: call('crash:report'),
+  crashLog: call('crash:log'),
+  crashClear: call('crash:clear'),
+  crashSend: call('crash:send'),
+  publishStatus: call('publish:status'),
+  publishLogin: call('publish:login'),
+  publishLogout: call('publish:logout'),
+  publishRun: call('publish:run'),
+  onPublishProgress: on('publish:progress'),
+  fileSize: call('file:size'),
+
   onToolCall: on('tool:call'),
   toolResult: (id: number, result: unknown) => ipcRenderer.send('tool:result', id, result),
 };

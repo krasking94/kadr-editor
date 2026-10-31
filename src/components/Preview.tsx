@@ -6,6 +6,9 @@ import type { MediaClip, MediaItem, Project, TextClip, Track } from '../../share
 import { baseLayerSize } from '../../shared/export-graph';
 import { blendOf, croppedMedia, effectiveCrop, faceBlurRadius, facesAt, hasCrop, hasWheels, maskCss, padBox } from '../../shared/look';
 import { clipDuration, cssFilter, formatTime, projectDuration, textAnimState, transformAt, transitionDuration, FORMAT_PRESETS } from '../../shared/timeline';
+import { resolveFollows, sourceToFrame, textShift, trackAt } from '../../shared/track';
+import { camAudioSource } from '../../shared/multicam';
+import { cancelPick, trackClip } from '../state/track';
 import { activeWord, drawText } from '../lib/text-render';
 import { PixelFx } from './PixelFx';
 import { loadFonts } from '../lib/fonts';
@@ -58,12 +61,23 @@ function collectLayers(p: Project, t: number, W: number, H: number): { layers: L
   return { layers, flash };
 }
 
+// Слои, которые едут за объектом, получают путь движения в копии проекта (сам проект не меняется)
+function useResolved(p: Project): Project {
+  return useMemo(() => {
+    if (!p.tracks.some(t => t.clips.some(c => c.follow))) return p;
+    const q = structuredClone(p);
+    resolveFollows(q);
+    return q;
+  }, [p]);
+}
+
 export function Preview() {
-  const project = useStore(s => s.project)!;
+  const project = useResolved(useStore(s => s.project)!);
   const playhead = useStore(s => s.playhead);
   const playing = useStore(s => s.playing);
   const selection = useStore(s => s.selection);
   const safeZones = useStore(s => s.safeZones);
+  const trackPick = useStore(s => s.trackPick);
   const lastAction = useStore(s => s.lastAction);
   const [box, setBox] = useState({ w: 800, h: 450 });
   const [muted, setMuted] = useState(false);
@@ -138,10 +152,12 @@ export function Preview() {
           onMouseDown={e => { if (e.target === e.currentTarget) set({ selection: [] }); }}>
           {layers.map(l => l.clip.type === 'media'
             ? <MediaLayer key={l.clip.id} info={l} media={mediaMap.get(l.clip.mediaId)} W={stageW} H={stageH} k={k}
-              t={playhead} playing={playing} selected={selection.includes(l.clip.id)} muted={muted} />
+              t={playhead} playing={playing} selected={selection.includes(l.clip.id)} muted={muted} camAudio={l.clip.cam ? camAudioSource(project, l.clip) : null} />
             : <TextLayer key={l.clip.id} clip={l.clip} z={l.z} W={stageW} H={stageH} t={playhead} selected={selection.includes(l.clip.id)} />)}
           {flash && <div style={{ position: 'absolute', inset: 0, background: flash.color, opacity: flash.opacity, zIndex: 50, pointerEvents: 'none' }} />}
           {safeZones && <div className="safe-zones" style={{ zIndex: 9999 }}><Thirds /></div>}
+          <TrackOverlay project={project} t={playhead} W={stageW} H={stageH} />
+          {trackPick && <PickBox clipId={trackPick} W={stageW} H={stageH} />}
         </div>
         {empty && (
           <div className="preview-empty">
@@ -187,11 +203,12 @@ function Thirds() {
   );
 }
 
-const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaItem; W: number; H: number; k: number; t: number; playing: boolean; selected: boolean; muted: boolean }) {
+const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaItem; W: number; H: number; k: number; t: number; playing: boolean; selected: boolean; muted: boolean; camAudio?: ReturnType<typeof camAudioSource> }) {
   const useProxy = useStore(s => s.settings.proxy !== 'off');
   const c = p.info.clip as MediaClip;
   const m = p.media;
   const elRef = useRef<HTMLVideoElement & HTMLAudioElement>(null);
+  const camRef = useRef<HTMLAudioElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const local = Math.max(0, p.t - c.start);
   const desired = c.in + local * c.speed;
@@ -216,14 +233,29 @@ const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaI
     if (c.audioFadeOut > 0 && dur - local < c.audioFadeOut) gain *= Math.max(0, (dur - local) / c.audioFadeOut);
     gain *= p.info.fx.opacity * (p.info.track.volume ?? 1);
     el.volume = Math.max(0, Math.min(1, gain));
-    el.muted = p.muted || c.muted || p.info.track.muted || !visible;
+    // мультикамера: звук идёт с другой камеры, своя дорожка клипа молчит
+    el.muted = p.muted || c.muted || p.info.track.muted || !visible || !!p.camAudio;
+    const au = camRef.current;
+    if (au && p.camAudio) {
+      const at = p.camAudio.in + local * c.speed;
+      au.volume = el.volume;
+      au.muted = p.muted || c.muted || p.info.track.muted || !visible;
+      if (p.playing && visible) {
+        if (Math.abs(au.currentTime - at) > 0.25) au.currentTime = at;
+        if (au.paused) au.play().catch(() => undefined);
+      } else {
+        if (!au.paused) au.pause();
+        if (Math.abs(au.currentTime - at) > 0.05) au.currentTime = at;
+      }
+    }
   });
 
   if (!m || m.missing) {
     if (!visible || p.info.track.kind === 'audio') return null;
     return <div className="layer" style={{ width: p.W, height: p.H, zIndex: p.info.z, display: 'grid', placeItems: 'center', background: '#3a1620', color: '#ffb3bd', fontSize: 13 }}>Файл не найден: {m?.name}</div>;
   }
-  if (m.kind === 'audio' || p.info.track.hidden) {
+  // на звуковой дорожке видеофайл только звучит (например, отделённый звук), картинку не показываем
+  if (m.kind === 'audio' || p.info.track.hidden || p.info.track.kind === 'audio') {
     return <audio ref={elRef} src={mediaUrl(previewPath(m, useProxy))} preload="auto" />;
   }
   if (c.adjust) return <AdjustLayer clip={c} z={p.info.z} visible={visible} local={local} k={p.k} />;
@@ -260,6 +292,7 @@ const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaI
           {m.kind === 'image'
             ? <img ref={imgRef} src={mediaUrl(m.path)} crossOrigin="anonymous" draggable={false} style={pixel ? { opacity: 0 } : undefined} />
             : <video ref={elRef} src={mediaUrl(previewPath(m, useProxy))} crossOrigin="anonymous" preload="auto" playsInline disablePictureInPicture style={pixel ? { opacity: 0 } : undefined} />}
+          {p.camAudio && <audio ref={camRef} src={mediaUrl(previewPath(p.camAudio.media, useProxy))} preload="auto" />}
           {pixel && visible && <PixelFx source={m.kind === 'image' ? imgRef : elRef} keyColor={c.key} lut={c.color.lut} wheels={c.color.wheels} w={fullW} h={fullH} playing={p.playing} t={p.t} />}
           {faces.map((b, i) => {
             const [x, y, bw, bh] = padBox(b);
@@ -342,12 +375,13 @@ const TextLayer = memo(function TextLayer(p: { clip: TextClip; z: number; W: num
   }, [styleKey]);
   const visible = p.t >= p.clip.start && p.t < p.clip.start + p.clip.duration;
   const a = textAnimState(p.clip, p.t - p.clip.start);
-  const tf = `translate(${a.dx * p.W}px, ${a.dy * p.H}px) scale(${a.scale})`;
+  const sh = textShift(p.clip, p.t - p.clip.start); // текст едет за объектом
+  const tf = `translate(${(a.dx + sh.x) * p.W}px, ${(a.dy + sh.y) * p.H}px) scale(${a.scale})`;
   return (
     <>
       <canvas ref={ref} className="text-canvas" style={{ width: p.W, height: p.H, zIndex: p.z, opacity: visible ? a.opacity : 0, transform: tf, transformOrigin: `${p.clip.style.x * 100}% ${p.clip.style.y * 100}%` }} />
       {visible && bbox && (
-        <div style={{ position: 'absolute', left: bbox.x, top: bbox.y, width: bbox.w, height: bbox.h, zIndex: p.z + 1, cursor: 'move', outline: p.selected ? '2px solid var(--accent)' : undefined, outlineOffset: 4, borderRadius: 3 }}
+        <div style={{ position: 'absolute', left: bbox.x + sh.x * p.W, top: bbox.y + sh.y * p.H, width: bbox.w, height: bbox.h, zIndex: p.z + 1, cursor: 'move', outline: p.selected ? '2px solid var(--accent)' : undefined, outlineOffset: 4, borderRadius: 3 }}
           onPointerDown={e => startTextDrag(e, p.clip, p.W, p.H)}
           onDoubleClick={() => set({ selection: [p.clip.id], inspectorTab: 'text' })} />
       )}
@@ -372,3 +406,63 @@ function startTextDrag(e: React.PointerEvent, c: TextClip, W: number, H: number)
   window.addEventListener('pointerup', up);
 }
 
+
+// Рамка объекта, за которым следит программа: видна, когда клип выбран
+function TrackOverlay({ project, t, W, H }: { project: Project; t: number; W: number; H: number }) {
+  const selection = useStore(s => s.selection);
+  const playing = useStore(s => s.playing);
+  if (playing) return null;
+  const boxes: { id: string; x: number; y: number; w: number; h: number }[] = [];
+  for (const tr of project.tracks) for (const c of tr.clips) {
+    if (c.type !== 'media' || !c.track?.samples.length || !selection.includes(c.id)) continue;
+    if (t < c.start || t >= c.start + clipDuration(c)) continue;
+    const m = project.media.find(x => x.id === c.mediaId);
+    if (!m) continue;
+    const local = t - c.start;
+    const s = trackAt(c.track, c.in + local * c.speed);
+    if (!s) continue;
+    const a = sourceToFrame(c, m, project.width, project.height, local, s.x - s.w / 2, s.y - s.h / 2);
+    const b = sourceToFrame(c, m, project.width, project.height, local, s.x + s.w / 2, s.y + s.h / 2);
+    boxes.push({ id: c.id, x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) });
+  }
+  return <>{boxes.map(b => <div key={b.id} className="track-box" style={{ left: b.x * W, top: b.y * H, width: b.w * W, height: b.h * H }}><span>объект</span></div>)}</>;
+}
+
+// Режим «обведите объект»: человек тянет рамку мышью, отпускает — программа начинает следить
+function PickBox({ clipId, W, H }: { clipId: string; W: number; H: number }) {
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); cancelPick(); } };
+    window.addEventListener('keydown', k, true);
+    return () => window.removeEventListener('keydown', k, true);
+  }, []);
+  const pos = (e: React.PointerEvent | PointerEvent) => {
+    const r = ref.current!.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) };
+  };
+  const down = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const a = pos(e);
+    let cur = { x0: a.x, y0: a.y, x1: a.x, y1: a.y };
+    setBox(cur);
+    const move = (ev: PointerEvent) => { const b = pos(ev); cur = { ...cur, x1: b.x, y1: b.y }; setBox(cur); };
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      const r = { x: Math.min(cur.x0, cur.x1), y: Math.min(cur.y0, cur.y1), w: Math.abs(cur.x1 - cur.x0), h: Math.abs(cur.y1 - cur.y0) };
+      setBox(null);
+      if (r.w * W < 8 || r.h * H < 8) { toast('info', 'Рамка слишком маленькая — протяните её вокруг объекта'); return; }
+      trackClip(clipId, r).catch(() => undefined);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  const b = box && { left: Math.min(box.x0, box.x1) * W, top: Math.min(box.y0, box.y1) * H, width: Math.abs(box.x1 - box.x0) * W, height: Math.abs(box.y1 - box.y0) * H };
+  return (
+    <div ref={ref} className="pick-layer" onPointerDown={down}>
+      {!box && <div className="pick-hint">Обведите объект рамкой · Esc — отмена</div>}
+      {b && <div className="track-box picking" style={b} />}
+    </div>
+  );
+}

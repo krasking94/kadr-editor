@@ -46,7 +46,7 @@ export interface ConfirmRequest {
 }
 
 export interface QueueItem { id: string; name: string; outPath: string; state: 'wait' | 'run' | 'done' | 'error' | 'canceled'; error?: string }
-export type Dialog = 'export' | 'settings' | 'palette' | 'shortcuts' | 'about' | 'cover' | null;
+export type Dialog = 'export' | 'settings' | 'palette' | 'shortcuts' | 'about' | 'cover' | 'preflight' | 'publish' | 'draft' | 'multicam' | 'reports' | null;
 
 interface State {
   screen: 'welcome' | 'editor';
@@ -79,6 +79,9 @@ interface State {
   previewScale: number;
   inspectorTab: string;
   exportQueue: QueueItem[];
+  trackPick: string | null; // окно просмотра ждёт рамку вокруг объекта для этого клипа (0.9)
+  prompter: boolean; // открыт телесуфлёр (0.9)
+  lastExport: string | null; // последнее сохранённое видео — его удобно сразу опубликовать (0.9)
 }
 
 export const useStore = create<State>(() => ({
@@ -112,6 +115,9 @@ export const useStore = create<State>(() => ({
   previewScale: 1,
   inspectorTab: 'main',
   exportQueue: [],
+  trackPick: null,
+  prompter: false,
+  lastExport: null,
 }));
 
 export const get = useStore.getState;

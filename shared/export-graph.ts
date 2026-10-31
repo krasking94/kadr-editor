@@ -3,6 +3,8 @@ import type { ExportOptions, MediaClip, MediaItem, Project, TextClip, TextRender
 import { COLOR_PRESETS, clipDuration, layoutProject, projectDuration, transitionDuration } from './timeline';
 import { isStatic, keyExpr, keysOf, range } from './keyframes';
 import { blendOf, croppedMedia, cropFilter, effectiveCrop, eqFilters, faceBlurRadius, maskFilter, wheelsFilter } from './look';
+import { resolveFollows } from './track';
+import { camAudioSource } from './multicam';
 
 export interface ExportPlan {
   args: string[];
@@ -57,17 +59,44 @@ export function baseLayerSize(m: MediaItem, fit: 'fit' | 'fill', W: number, H: n
 const even = (v: number) => Math.max(2, Math.round(v / 2) * 2);
 
 // Кусочно-линейное выражение FFmpeg по точкам пути: значение в момент T (сек от начала клипа)
-export function pathExpr(points: { t: number; v: number }[], T: string): string {
-  if (!points.length) return '0';
+export function pathExpr(points0: { t: number; v: number }[], T: string): string {
+  if (!points0.length) return '0';
+  if (points0.length === 1) return n(points0[0].v);
+  const points = simplifyPath(points0);
   if (points.length === 1) return n(points[0].v);
-  let e = n(points[points.length - 1].v);
-  for (let i = points.length - 2; i >= 0; i--) {
+  const seg = (i: number) => {
     const a = points[i], b = points[i + 1];
     const dt = Math.max(1e-3, b.t - a.t);
-    const seg = a.v === b.v ? n(a.v) : `(${n(a.v)}+(${n(b.v - a.v)})*(${T}-${n(a.t)})/${n(dt)})`;
-    e = `if(lt(${T},${n(b.t)}),${seg},${e})`;
+    return a.v === b.v ? n(a.v) : `(${n(a.v)}+(${n(b.v - a.v)})*(${T}-${n(a.t)})/${n(dt)})`;
+  };
+  // выбор отрезка «делением пополам»: глубина вложенных if растёт как log2, иначе FFmpeg
+  // не может разобрать длинный путь (больше ~100 вложенных скобок)
+  const tree = (lo: number, hi: number): string => {
+    if (lo === hi) return seg(lo);
+    const mid = (lo + hi) >> 1;
+    return `if(lt(${T},${n(points[mid + 1].t)}),${tree(lo, mid)},${tree(mid + 1, hi)})`;
+  };
+  const last = points[points.length - 1];
+  return `if(lt(${T},${n(points[0].t)}),${n(points[0].v)},if(gte(${T},${n(last.t)}),${n(last.v)},${tree(0, points.length - 2)}))`;
+}
+
+/** Убрать точки, которые почти лежат на прямой между соседями (движение не меняется, выражение короче) */
+export function simplifyPath(pts: { t: number; v: number }[], eps = 0.0015): { t: number; v: number }[] {
+  if (pts.length <= 2) return pts;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const stack: [number, number][] = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    let worst = -1, dmax = eps;
+    for (let i = a + 1; i < b; i++) {
+      const k = (pts[i].t - pts[a].t) / Math.max(1e-9, pts[b].t - pts[a].t);
+      const d = Math.abs(pts[i].v - (pts[a].v + (pts[b].v - pts[a].v) * k));
+      if (d > dmax) { dmax = d; worst = i; }
+    }
+    if (worst > 0) { keep[worst] = 1; stack.push([a, worst], [worst, b]); }
   }
-  return `if(lt(${T},${n(points[0].t)}),${n(points[0].v)},${e})`;
+  return pts.filter((_, i) => keep[i]);
 }
 
 /**
@@ -220,10 +249,14 @@ function textOverlay(c: TextClip) {
     const s = parts.join('*');
     f.push(`scale=w='2*trunc(iw*${s}/2)':h='2*trunc(ih*${s}/2)':eval=frame`);
   }
-  const x = `'(W-w)/2${dx.join('')}'`;
-  const y = `'(H-h)/2${dy.join('')}'`;
+  const x = `'(W-w)/2${dx.join('')}${followX(c)}'`;
+  const y = `'(H-h)/2${dy.join('')}${followY(c)}'`;
   return { filters: f, x, y };
 }
+
+// Текст едет за объектом: сдвиг по рассчитанному пути (время — от начала текста)
+const followX = (c: TextClip) => (c.follow && c.path?.length ? `+(${pathExpr(c.path.map(q => ({ t: q.t, v: q.x })), `(t-${n(c.start)})`)})*W` : '');
+const followY = (c: TextClip) => (c.follow && c.path?.length ? `+(${pathExpr(c.path.map(q => ({ t: q.t, v: q.y })), `(t-${n(c.start)})`)})*H` : '');
 
 export function buildExportArgs(
   projectIn: Project,
@@ -233,6 +266,7 @@ export function buildExportArgs(
 ): ExportPlan {
   const p: Project = JSON.parse(JSON.stringify(projectIn));
   layoutProject(p);
+  resolveFollows(p);
   const W = even(p.width), H = even(p.height), fps = p.fps;
   const total = Math.max(0.5, projectDuration(p));
   const mediaMap = new Map(p.media.map(m => [m.id, m]));
@@ -321,7 +355,7 @@ export function buildExportArgs(
     // ── Видео: дорожки наложения и текста (снизу вверх) ───
     const overlayText = (png: string, c: TextClip, from: number, to: number, animated: boolean) => {
       const idx = addInput(['-loop', '1', '-framerate', String(fps), '-t', n(to - from), '-i', png]);
-      const { filters, x, y } = animated ? textOverlay(c) : { filters: ['format=rgba'], x: "'(W-w)/2'", y: "'(H-h)/2'" };
+      const { filters, x, y } = animated ? textOverlay(c) : { filters: ['format=rgba'], x: `'(W-w)/2${followX(c)}'`, y: `'(H-h)/2${followY(c)}'` };
       const st = c.start + from;
       const lay = L('l'), nx = L('s');
       graph.push(`[${idx}:v]${filters.join(',')},setpts=PTS+${n(st)}/TB[${lay}]`);
@@ -336,7 +370,7 @@ export function buildExportArgs(
       const inSeq = new Set<string>();
       if (extras.tempDir && extras.blank) {
         const cand = track.clips
-          .filter((c): c is TextClip => c.type === 'text' && c.animIn === 'none' && c.animOut === 'none' && !!textMap.get(c.id))
+          .filter((c): c is TextClip => c.type === 'text' && c.animIn === 'none' && c.animOut === 'none' && !c.follow && !!textMap.get(c.id))
           .sort((a, b) => a.start - b.start);
         let lastEnd = 0;
         for (const c of cand) {
@@ -436,8 +470,10 @@ export function buildExportArgs(
     clips.forEach((c, i) => {
       if (c.type !== 'media' || c.muted || c.volume <= 0 || c.adjust) return;
       const m = mediaMap.get(c.mediaId);
-      if (!m || !m.hasAudio || m.kind === 'image') return;
-      const idx = ensureInput(c);
+      // мультикамера: звук может идти с другой камеры, но с того же момента съёмки
+      const cam = camAudioSource(p, c);
+      if (!cam && (!m || !m.hasAudio || m.kind === 'image')) return;
+      const idx = cam ? addInput(['-ss', n(cam.in), '-t', n(Math.max(0.05, cam.out - cam.in)), '-i', cam.media.path]) : ensureInput(c);
       const dur = clipDuration(c);
       const f: string[] = ['asetpts=PTS-STARTPTS', 'aresample=48000', 'aformat=channel_layouts=stereo', ...atempoChain(c.speed), ...voiceFilters(c)];
       const vol = c.volume * (track.volume ?? 1);

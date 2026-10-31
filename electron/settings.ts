@@ -2,7 +2,7 @@
 import { app, safeStorage } from 'electron';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { defaultBrand, defaultSettings, type Settings } from '../shared/settings';
+import { defaultBrand, defaultPrompter, defaultPublish, defaultSettings, type Settings } from '../shared/settings';
 
 const file = () => join(app.getPath('userData'), 'settings.json');
 const secretsFile = () => join(app.getPath('userData'), 'keys.json');
@@ -15,7 +15,7 @@ export function getSettings(): Settings {
   try {
     if (existsSync(file())) {
       const saved = JSON.parse(readFileSync(file(), 'utf8'));
-      cache = { ...base, ...saved, ai: { ...base.ai, ...saved.ai }, gen: { ...base.gen, ...saved.gen }, mcp: { ...base.mcp, ...saved.mcp }, brand: { ...defaultBrand(), ...saved.brand } };
+      cache = { ...base, ...saved, ai: { ...base.ai, ...saved.ai }, gen: { ...base.gen, ...saved.gen }, mcp: { ...base.mcp, ...saved.mcp }, brand: { ...defaultBrand(), ...saved.brand }, publish: { ...defaultPublish(), ...saved.publish }, reports: { ...base.reports, ...saved.reports }, prompter: { ...defaultPrompter(), ...saved.prompter } };
       return cache!;
     }
   } catch { /* повреждённый файл — начинаем с настроек по умолчанию */ }
@@ -25,7 +25,7 @@ export function getSettings(): Settings {
 
 export function setSettings(patch: Partial<Settings>): Settings {
   const cur = getSettings();
-  cache = { ...cur, ...patch, ai: { ...cur.ai, ...(patch.ai || {}) }, gen: { ...cur.gen, ...(patch.gen || {}) }, mcp: { ...cur.mcp, ...(patch.mcp || {}) }, brand: { ...cur.brand, ...(patch.brand || {}) } };
+  cache = { ...cur, ...patch, ai: { ...cur.ai, ...(patch.ai || {}) }, gen: { ...cur.gen, ...(patch.gen || {}) }, mcp: { ...cur.mcp, ...(patch.mcp || {}) }, brand: { ...cur.brand, ...(patch.brand || {}) }, publish: { ...cur.publish, ...(patch.publish || {}) }, reports: { ...cur.reports, ...(patch.reports || {}) }, prompter: { ...cur.prompter, ...(patch.prompter || {}) } };
   mkdirSync(dirname(file()), { recursive: true });
   writeFileSync(file(), JSON.stringify(cache, null, 2));
   return cache;

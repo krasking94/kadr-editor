@@ -1,6 +1,6 @@
 // Верхняя полоса окна: меню, название проекта, отмена/возврат, ИИ и кнопка «Сохранить видео».
 import { useEffect, useState } from 'react';
-import { Command as CmdIcon, Download, History, Redo2, Sparkles, Undo2 } from 'lucide-react';
+import { Command as CmdIcon, Download, History, Redo2, Send, Sparkles, Undo2 } from 'lucide-react';
 import { api } from '../api';
 import { COMMANDS, prettyKeys, type Command } from '../lib/commands';
 import { commit, redo, set, sourceLabel, undo, useStore } from '../state/store';
@@ -20,7 +20,7 @@ function menuItems(groups: Command['group'][]): MenuItem[] {
   const out: MenuItem[] = [];
   groups.forEach((g, i) => {
     if (i) out.push({ separator: true });
-    for (const c of COMMANDS.filter(x => x.group === g)) out.push({ label: c.label, shortcut: prettyKeys(c.keys?.[0]), onClick: c.run });
+    for (const c of COMMANDS.filter(x => x.group === g && !/^cam-[2-9]/.test(x.id))) out.push({ label: c.label, shortcut: prettyKeys(c.keys?.[0]), onClick: c.run });
   });
   return out;
 }
@@ -65,6 +65,9 @@ export function TitleBar() {
       </button>
       <button className={'btn small' + (assistantOpen ? ' active' : '')} onClick={() => set(s => ({ assistantOpen: !s.assistantOpen }))} data-tip={'Помощник монтирует по вашей просьбе\nCtrl+J'}>
         <Sparkles size={14} color="var(--accent)" /> ИИ-помощник
+      </button>
+      <button className="btn small" onClick={() => set({ dialog: 'preflight' })} data-tip={'Проверить ролик и опубликовать в YouTube, ВК или Telegram\nCtrl+Shift+E — проверка, Ctrl+Shift+U — публикация'}>
+        <Send size={14} /> Опубликовать
       </button>
       <button className="btn primary small" onClick={() => set({ dialog: 'export' })} data-tip={'Сохранить готовое видео\nCtrl+E'}>
         <Download size={14} /> Сохранить видео

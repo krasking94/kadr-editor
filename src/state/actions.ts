@@ -272,6 +272,8 @@ export function splitAt(time: number, clipId?: string, source?: string): string[
       } else {
         const srcCut = c.in + local * c.speed;
         const s2 = second as MediaClip;
+        // вложенный клип после разреза уже не разобрать на исходные: половинки стали обычными клипами
+        if (c.group) { delete c.group; delete s2.group; }
         s2.in = srcCut; s2.start = time; s2.transition = undefined; s2.fadeIn = 0; s2.audioFadeIn = 0;
         c.out = srcCut; c.fadeOut = 0; c.audioFadeOut = 0;
       }
@@ -658,7 +660,7 @@ export async function detectScenes(clipId: string, split = true, sensitivity = 0
 }
 
 // ── Экспорт ──────────────────────────────────────────
-async function textRenders(p: Project, scale = 1) {
+export async function textRenders(p: Project, scale = 1) {
   await loadFonts();
   const W = Math.round(p.width * scale), H = Math.round(p.height * scale);
   const out: { clipId: string; dataUrl: string; from?: number; to?: number }[] = [];
@@ -703,6 +705,8 @@ export async function exportVideo(opts: ExportOptions, source?: string, snap?: {
   });
   try {
     const res: ExportResult = await api.exportStart(jobId, p, snap?.texts ?? await textRenders(p), opts);
+    // готовое видео запоминаем — его можно сразу опубликовать (Файл → Опубликовать)
+    if (res.ok && ['mp4', 'mov', 'webm'].includes(opts.format)) set({ lastExport: res.outPath! });
     if (res.ok) toast('success', 'Видео готово!', {
       detail: res.outPath, ttl: 12000,
       action: { label: 'Показать в папке', run: () => api.showItem(res.outPath!) },
