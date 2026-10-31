@@ -42,8 +42,8 @@ function pixel(file: string, t: number, x: number, y: number): number[] {
 
 test('выражение пути: значения в точках и между ними', () => {
   const e = pathExpr([{ t: 0, v: 0.2 }, { t: 2, v: 0.6 }, { t: 4, v: 0.6 }], 'T');
-  const fn = new Function('T', 'iff', 'lt', 'return ' + e.replace(/\bif\(/g, 'iff('));
-  const val = (T: number) => fn(T, (c: number, a: number, b: number) => (c ? a : b), (a: number, b: number) => (a < b ? 1 : 0));
+  const fn = new Function('T', 'iff', 'lt', 'gte', 'return ' + e.replace(/\bif\(/g, 'iff('));
+  const val = (T: number) => fn(T, (c: number, a: number, b: number) => (c ? a : b), (a: number, b: number) => (a < b ? 1 : 0), (a: number, b: number) => (a >= b ? 1 : 0));
   assert.ok(Math.abs(val(0) - 0.2) < 1e-6);
   assert.ok(Math.abs(val(1) - 0.4) < 1e-6);
   assert.ok(Math.abs(val(3) - 0.6) < 1e-6);

@@ -433,6 +433,73 @@ export const TOOLS: ToolDef[] = [
     }),
   },
   {
+    name: 'speed_ramp', title: 'Меняю скорость по кривой',
+    description: 'Smooth speed ramp on a video clip (speed changes along a curve, with audio). Use a preset or custom points: u = position in the clip 0..1, s = speed 0.1..8 (1 = normal). Presets: moment (slow-motion in the middle), rush (fast in the middle), bullet (fast-slow-fast), speedup, slowdown. clear=true restores normal speed. Processing into a copy takes about the clip length.',
+    inputSchema: obj({
+      clip_id: str('Video clip id'),
+      preset: str('Ready curve', ['moment', 'rush', 'bullet', 'speedup', 'slowdown']),
+      points: { type: 'array', items: obj({ u: num('0..1 position in clip'), s: num('Speed 0.1..8') }, ['u', 's']), description: 'Custom curve' },
+      clear: bool('Remove the ramp'),
+    }, ['clip_id']),
+  },
+  {
+    name: 'group_clips', title: 'Объединяю клипы',
+    description: 'Nest clips: render adjacent main-track clips (and overlays/texts lying fully over them) into one clip that can be moved, cut, colored and sped up as a whole. ungroup_clip restores the originals.',
+    inputSchema: obj({ clip_ids: { type: 'array', items: { type: 'string' }, description: 'Main-track clip ids (adjacent)' }, name: str('Name for the nested clip') }, ['clip_ids']),
+  },
+  {
+    name: 'ungroup_clip', title: 'Разбираю клип',
+    description: 'Turn a nested clip (made by group_clips) back into its original clips.',
+    inputSchema: obj({ clip_id: str('Nested clip id') }, ['clip_id']),
+  },
+  {
+    name: 'create_multicam', title: 'Собираю мультикамеру',
+    description: 'Multicam: sync 2-6 videos of the same event from different cameras by their sound and put one switchable clip on the main track. Then use switch_camera to cut between cameras.',
+    inputSchema: obj({ media_ids: { type: 'array', items: { type: 'string' }, description: 'Video media ids, first = main camera' }, audio: num('Camera index whose sound is used (0-based), -1 = sound of the camera in the frame') }, ['media_ids']),
+  },
+  {
+    name: 'switch_camera', title: 'Переключаю камеру',
+    description: 'In a multicam clip, switch to camera `angle` (0-based) starting at timeline `time` (the clip is cut there). whole=true switches the whole clip.',
+    inputSchema: obj({ angle: num('Camera index 0..5'), time: num('Timeline seconds, default playhead'), clip_id: str('Multicam clip id'), whole: bool('Whole clip') }, ['angle']),
+  },
+  {
+    name: 'track_object', title: 'Слежу за объектом',
+    description: 'Track an object (person, car, product, logo) through a video clip. Give its box in the frame at `time` as fractions of the frame (x,y = top-left, w,h = size; use get_frame to see). Then use attach_to_object or blur_object.',
+    inputSchema: obj({ clip_id: str('Video clip id'), time: num('Timeline time where the box is drawn'), x: num('0..1'), y: num('0..1'), w: num('0..1'), h: num('0..1'), label: str('What it is') }, ['clip_id', 'x', 'y', 'w', 'h']),
+  },
+  {
+    name: 'attach_to_object', title: 'Прикрепляю к объекту',
+    description: 'Make a text, sticker or overlay follow a tracked object. Give target_id (the layer) and object_clip_id (the tracked video clip); object_clip_id empty = stop following. Or pass text to create a new label that follows the object.',
+    inputSchema: obj({ object_clip_id: str('Tracked clip id'), target_id: str('Existing text/overlay clip id'), text: str('Create a new following label with this text') }),
+  },
+  {
+    name: 'blur_object', title: 'Размываю объект',
+    description: 'Blur a tracked object for the whole clip (license plate, logo, phone screen). Call track_object first.',
+    inputSchema: obj({ clip_id: str('Tracked video clip id'), strength: num('0..1, default 0.75') }, ['clip_id']),
+  },
+  {
+    name: 'preflight_check', title: 'Проверяю ролик',
+    description: 'Check the video before publishing: loudness, clipping, silence, black or frozen parts, texts cut off or under the app UI in vertical videos, music cut at the end, missing files, overlapping subtitles. Returns a list of issues with fixes. deep=false skips the full render scan.',
+    inputSchema: obj({ deep: bool('Scan the whole render (default true)'), fix: bool('Apply all automatic fixes') }),
+  },
+  {
+    name: 'auto_draft', title: 'Собираю черновик',
+    description: 'Build a rough cut from raw footage: transcribes speech, picks the best moments for the request, orders them, adds subtitles, a title and music. Use when the user gives raw recordings and asks to "make a video".',
+    inputSchema: obj({
+      request: str('What the video should be, in the user words'),
+      media_ids: { type: 'array', items: { type: 'string' }, description: 'Raw videos/photos, default all' },
+      target: num('Target length in seconds, default 60'),
+      format: str('Frame', ['project', 'vertical', 'wide', 'square']),
+      subtitles: bool('Add subtitles (default true)'), title: bool('Add a title (default true)'), music_id: str('Music media id'),
+      replace: bool('Replace the current main track instead of appending'),
+    }, ['request']),
+  },
+  {
+    name: 'open_publish', title: 'Открываю публикацию',
+    description: 'Open the publish window (YouTube, VK, Telegram) with a suggested title, description and tags. Never uploads by itself: the user presses the button.',
+    inputSchema: obj({ title: str('Suggested title'), description: str('Suggested description'), tags: { type: 'array', items: { type: 'string' } } }),
+  },
+  {
     name: 'undo', title: 'Отменяю', description: 'Undo the last change.', inputSchema: obj({}),
   },
   {
@@ -468,4 +535,9 @@ Rules:
 - To remove specific phrases, repeats, mistakes or off-topic talk, use get_transcript then cut_transcript (text-based editing).
 - To turn a long video into Reels/Shorts use find_shorts then make_shorts. For music videos use beat_sync.
 - Color grading: auto_color first, then update_clip color.wheels for a look; to grade everything at once use add_adjustment_layer and update it. Blur strangers with blur_faces.
+- Speed: for dynamic sport/action moments use speed_ramp (preset moment or bullet) instead of a flat speed.
+- Several cameras of one event: create_multicam, then switch_camera at moments where the speaker changes or every 4-8 s for energy.
+- To label or point at a moving thing, track_object then attach_to_object with text; to hide a plate/logo, track_object then blur_object.
+- To treat several clips as one (color/speed/move together), group_clips. Before saying the video is ready to publish run preflight_check.
+- If the user gives raw footage and asks to make a video from it, use auto_draft. Never upload anywhere by yourself: open_publish only opens the window.
 - Titles: prefer add_title_template (brand colors) over plain add_text for name plates, intros, calls to subscribe and outros. make_cover makes a thumbnail. fit_music makes music end with the video.`;

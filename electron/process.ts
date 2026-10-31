@@ -6,11 +6,13 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { Project } from '../shared/types';
+import type { Project, RampPoint } from '../shared/types';
+import { rampDuration, rampFilterGraph } from '../shared/ramp';
 import { buildExportArgs, ffPath } from '../shared/export-graph';
 import { FFMPEG, run } from './ffmpeg';
 
-export type ProcessKind = 'stabilize' | 'reverse';
+export type ProcessKind = 'stabilize' | 'reverse' | 'ramp';
+export interface ProcessOpts { ramp?: RampPoint[]; fps?: number; hasAudio?: boolean }
 
 const jobs = new Map<string, AbortController>();
 export const cancelProcess = (id: string) => jobs.get(id)?.abort();
@@ -30,13 +32,14 @@ const progressOf = (len: number, cb: (p: number) => void) => (s: string) => {
   if (m) cb(Math.min(1, Number(m[1]) / 1e6 / Math.max(0.01, len)));
 };
 
-export async function processClip(jobId: string, kind: ProcessKind, src: string, from: number, to: number, onProgress: (p: number) => void): Promise<string> {
+export async function processClip(jobId: string, kind: ProcessKind, src: string, from: number, to: number, onProgress: (p: number) => void, opts: ProcessOpts = {}): Promise<string> {
   let mtime = 0;
   try { mtime = statSync(src).mtimeMs; } catch { throw new Error('Исходный файл не найден'); }
   const len = Math.max(0.1, to - from);
-  const h = createHash('sha1').update([kind, src, mtime, fmt(from), fmt(to)].join('|')).digest('hex').slice(0, 12);
+  const h = createHash('sha1').update([kind, src, mtime, fmt(from), fmt(to), JSON.stringify(opts.ramp || '')].join('|')).digest('hex').slice(0, 12);
   const name = src.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, '');
-  const out = join(outDir(), `${name} — ${kind === 'stabilize' ? 'без тряски' : 'задом наперёд'} ${h}.mp4`);
+  const suffix = kind === 'stabilize' ? 'без тряски' : kind === 'reverse' ? 'задом наперёд' : 'смена скорости';
+  const out = join(outDir(), `${name} — ${suffix} ${h}.mp4`);
   if (existsSync(out)) return out;
   const ctrl = new AbortController();
   jobs.set(jobId, ctrl);
@@ -49,7 +52,15 @@ export async function processClip(jobId: string, kind: ProcessKind, src: string,
     throw new Error('FFmpeg: ' + r.stderr.trim().split('\n').slice(-2).join(' ').slice(0, 400));
   };
   try {
-    if (kind === 'stabilize') {
+    if (kind === 'ramp') {
+      // Плавная смена скорости: картинка — одной формулой времени, звук — короткими кусками с atempo
+      const { graph, maps } = rampFilterGraph(opts.ramp || [], len, opts.fps || 30, opts.hasAudio !== false);
+      const audioArgs = maps.length > 1 ? ['-c:a', 'aac', '-b:a', '192k'] : ['-an'];
+      const r = await run(FFMPEG, [...base, '-ss', fmt(from), '-t', fmt(len), '-i', src, '-filter_complex', graph, ...maps.flatMap(m => ['-map', m]),
+        '-c:v', 'libx264', '-preset', 'medium', '-crf', '17', '-pix_fmt', 'yuv420p', ...audioArgs, '-movflags', '+faststart', tmpOut],
+      { signal: ctrl.signal, onStdout: progressOf(rampDuration(opts.ramp || [], len), onProgress) });
+      if (r.code !== 0) fail(r);
+    } else if (kind === 'stabilize') {
       // Два прохода: сначала FFmpeg изучает, как трясётся камера, потом сглаживает движение
       const trf = join(work, 'motion.trf');
       const r1 = await run(FFMPEG, [...base, '-ss', fmt(from), '-t', fmt(len), '-i', src, '-an', '-vf', `vidstabdetect=shakiness=6:accuracy=12:result=${ffPath(trf)}`, '-f', 'null', '-'],

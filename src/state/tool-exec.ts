@@ -14,6 +14,14 @@ import * as SC from './script';
 import * as MT from './media-tools';
 import { timelineWords } from '../../shared/transcript';
 import type { ShapeKind } from '../lib/stickers';
+import { RAMP_PRESETS } from '../../shared/ramp';
+import { applyRamp, clearRamp } from './ramp';
+import { groupClips, ungroupClip } from './group';
+import { createMulticam, switchCamera } from './multicam';
+import { addTextOnObject, attachToObject, blurObject, trackClip } from './track';
+import { fixIssue, runPreflight } from './preflight';
+import { runDraft } from './draft';
+import { usePublish } from './publish';
 
 export interface ToolOutput { text: string; image?: string; isError?: boolean }
 
@@ -29,7 +37,7 @@ function projectSummary() {
     tracks: p.tracks.map(t => ({
       id: t.id, kind: t.kind, name: t.name, muted: t.muted, locked: t.locked, hidden: t.hidden, ...(t.volume !== undefined ? { volume: t.volume } : {}),
       clips: t.clips.map(c => c.type === 'text'
-        ? { id: c.id, type: 'text', text: c.text, start: r2(c.start), end: r2(c.start + c.duration), style: c.style, anim_in: c.animIn, anim_out: c.animOut, subtitle: !!c.subtitle, ...(c.words?.length ? { word_highlight: c.highlight || true } : {}) }
+        ? { id: c.id, type: 'text', text: c.text, start: r2(c.start), end: r2(c.start + c.duration), style: c.style, anim_in: c.animIn, anim_out: c.animOut, subtitle: !!c.subtitle, ...(c.words?.length ? { word_highlight: c.highlight || true } : {}), ...(c.follow ? { follows_object_of: c.follow.clipId } : {}) }
         : {
           id: c.id, type: 'media', media_id: c.mediaId, media_name: p.media.find(m => m.id === c.mediaId)?.name,
           start: r2(c.start), end: r2(c.start + clipDuration(c)), in: r2(c.in), out: r2(c.out), speed: c.speed,
@@ -38,9 +46,13 @@ function projectSummary() {
           voice: c.voice, denoise: c.denoise, key: c.key, ...(c.path?.length ? { face_tracking: true } : {}), ...(c.origin ? { processed: c.origin.done } : {}),
           ...(c.adjust ? { adjustment_layer: true } : {}), ...(c.blend ? { blend: c.blend } : {}), ...(c.crop ? { crop: c.crop } : {}), ...(c.mask ? { mask: c.mask } : {}),
           ...(c.smooth ? { smooth: true } : {}), ...(c.eq ? { eq: c.eq } : {}), ...(c.faces ? { faces_blurred: c.faces.samples.some(x => x.boxes.length), blur_strength: c.faces.strength } : {}),
+          ...(c.origin?.ramp ? { speed_ramp: c.origin.ramp.points } : {}), ...(c.group ? { nested_clips: c.group.main.length } : {}),
+          ...(c.cam ? { multicam: c.cam.group, camera: c.cam.angle } : {}), ...(c.track ? { tracked_object: c.track.label || true } : {}),
+          ...(c.follow ? { follows_object_of: c.follow.clipId } : {}),
         }),
     })),
     markers: p.markers.map(m => ({ time: r2(m.time), label: m.label })),
+    ...(p.multicam?.length ? { multicam: p.multicam.map(g => ({ id: g.id, name: g.name, cameras: g.angles.map(a => ({ media_id: a.mediaId, offset: a.offset })), audio: g.audio })) } : {}),
     formats: FORMAT_PRESETS.map(f => f.id),
   };
 }
@@ -303,6 +315,58 @@ export async function execTool(name: string, a: any, source: string): Promise<To
       else if (a.animate_frame) image = (await videoSourceImage())?.path;
       const r = await generate({ kind: 'video', prompt: String(a.prompt || ''), image, duration: a.duration, place: a.place || 'main', index: a.index, start: a.start }, source);
       return ok('Video created', { media_id: r.media.id, clip_id: r.clipId, duration: r2(r.duration), file: r.path });
+    }
+    case 'speed_ramp': {
+      if (a.clear) { clearRamp(String(a.clip_id), source); return ok('Normal speed restored'); }
+      const pts = Array.isArray(a.points) && a.points.length >= 2 ? a.points : RAMP_PRESETS.find(r => r.id === a.preset)?.points || RAMP_PRESETS[0].points;
+      await applyRamp(String(a.clip_id), pts, source);
+      const c = findClip(get().project!, String(a.clip_id))?.clip;
+      return ok('Speed ramp applied', c ? { duration: r2(clipDuration(c)) } : undefined);
+    }
+    case 'group_clips': {
+      const id = await groupClips((a.clip_ids || []).map(String), { name: a.name, source });
+      return ok('Grouped into one clip', { clip_id: id });
+    }
+    case 'ungroup_clip':
+      return ok('Ungrouped', { clip_ids: ungroupClip(String(a.clip_id), source) });
+    case 'create_multicam': {
+      const id = await createMulticam((a.media_ids || []).map(String), { audio: a.audio, source });
+      return ok('Multicam created', { group_id: id, clip_id: get().selection[0] });
+    }
+    case 'switch_camera': {
+      const done = switchCamera(Math.round(Number(a.angle) || 0), { time: a.time, clipId: a.clip_id, whole: !!a.whole, source });
+      return done ? ok(`Camera ${Number(a.angle) + 1}`) : { text: 'No multicam clip there', isError: true };
+    }
+    case 'track_object': {
+      const r = await trackClip(String(a.clip_id), { x: Number(a.x), y: Number(a.y), w: Number(a.w), h: Number(a.h) }, { time: a.time, source, label: a.label });
+      return ok('Object tracked', { samples: r.samples, lost: r.lost });
+    }
+    case 'attach_to_object': {
+      if (a.text) return ok('Label follows the object', { clip_id: addTextOnObject(String(a.object_clip_id), String(a.text), source) });
+      attachToObject(String(a.target_id), a.object_clip_id ? String(a.object_clip_id) : null, source);
+      return ok(a.object_clip_id ? 'Layer follows the object' : 'Layer stays in place');
+    }
+    case 'blur_object':
+      blurObject(String(a.clip_id), a.strength ?? 0.75, source);
+      return ok('Object blurred');
+    case 'preflight_check': {
+      let issues = await runPreflight({ deep: a.deep !== false });
+      if (a.fix) {
+        for (const i of issues) if (i.fix) await fixIssue(i).catch(() => undefined);
+        issues = await runPreflight({ deep: false });
+      }
+      return ok(issues.length ? `${issues.length} issue(s)` : 'All good', issues.map(i => ({ level: i.level, title: i.title, detail: i.detail, time: i.time, clip_id: i.clipId, fix: i.fix?.label })));
+    }
+    case 'auto_draft': {
+      const p = get().project!;
+      const ids = Array.isArray(a.media_ids) && a.media_ids.length ? a.media_ids.map(String) : p.media.filter(m => m.kind !== 'audio').map(m => m.id);
+      const plan = await runDraft({ mediaIds: ids, request: String(a.request || ''), target: Number(a.target) || 60, format: a.format || 'project', subtitles: a.subtitles !== false, title: a.title !== false, musicId: a.music_id, replace: a.replace ?? false, source });
+      return plan ? ok('Draft built', { title: plan.title, pieces: plan.pieces.length, duration: r2(projectDuration(get().project!)) }) : { text: 'Could not build a draft', isError: true };
+    }
+    case 'open_publish': {
+      set({ dialog: 'publish' });
+      usePublish.setState({ suggest: { title: a.title, description: a.description, tags: a.tags } });
+      return ok('Publish window opened. The user will choose platforms and press Publish.');
     }
     case 'undo':
       undo();

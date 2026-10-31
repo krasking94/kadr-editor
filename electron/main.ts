@@ -12,13 +12,17 @@ import { FFMPEG, ffmpegAvailable, probe, thumbnails, waveform, detectSilence, de
 import { getSettings, setSettings, setSecret, secretStatus } from './settings';
 import { attachWindow, notify } from './bridge';
 import { chat, complete, listModels, resetSession, stopAi, transcribeFile } from './ai';
-import { audioSnippet, bgCleanup, bgFinish, bgFrames, bgPrepare, bgWrite, cancelProcess, makeProxy, measureLoudness, processClip, type ProcessKind } from './process';
+import { audioSnippet, bgCleanup, bgFinish, bgFrames, bgPrepare, bgWrite, cancelProcess, makeProxy, measureLoudness, processClip, type ProcessKind, type ProcessOpts } from './process';
+import { envelope, findOffset } from '../shared/multicam';
+import { parseAnalysis } from '../shared/preflight';
 import { detectBeats } from '../shared/beats';
 import { estimateWords } from '../shared/speech';
 import { checkForUpdates, downloadUpdate, installUpdate, updateState } from './updater';
 import { clientStatus, mcpServerState, startMcpServer, stopMcpServer, syncClients } from './mcp';
 import { cancelVideo, generateImage, generateMusic, generateSoundEffect, generateSpeech, generateVideo, listVoices } from './generate';
 import { bridgeSelfTest, connectClaudeDesktop, desktopEntry, desktopStatus } from './desktop-link';
+import { clearReports, listReports, log, reportsDir, reportText, saveReport, sendReports, watchCrashes } from './crash';
+import { publish, publishLogout, publishStatus, telegramCheck, vkLogin, youtubeLogin, type Platform, type PublishRequest } from './publish';
 
 // До версии 0.3 программа называлась «Кадр» (Kadr). Настройки, ключи нейросетей, список проектов
 // и автосохранения остаются в прежней папке, чтобы после обновления ничего не пропало.
@@ -33,7 +37,10 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'kadr-media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, bypassCSP: true, corsEnabled: true } },
 ]);
 
-if (!app.requestSingleInstanceLock()) app.quit();
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.quit();
+// Отчёты об ошибках: следим за сбоями с самого запуска (второй экземпляр программы сразу закрывается — ему не нужно)
+const crashState = gotLock ? watchCrashes() : { unclean: false };
 app.on('second-instance', (_e, argv) => {
   const file = argv.find(a => a.toLowerCase().endsWith('.kadr'));
   if (win) {
@@ -92,6 +99,9 @@ function createWindow() {
   });
   attachWindow(win);
   win.once('ready-to-show', () => win?.show());
+  // окно перестало отвечать дольше обычного — запомним, чтобы потом найти причину
+  win.webContents.on('unresponsive', () => { log('Окно не отвечает'); saveReport('hang', 'Программа зависла и не отвечала'); });
+  win.webContents.on('responsive', () => log('Окно снова отвечает'));
   win.on('close', e => {
     if (allowClose) return;
     e.preventDefault();
@@ -398,7 +408,7 @@ function writeTexts(texts: TextPayload[], jobId: string) {
   return texts.map((t, i) => ({ clipId: t.clipId, from: t.from, to: t.to, path: dataUrlToFile(t.dataUrl, join(tempDir(), `${jobId}_t${i}.png`)) }));
 }
 
-async function runExport(jobId: string, project: Project, texts: TextPayload[], opts: ExportOptions, onProgress?: (p: number, speed: string) => void) {
+async function runExport(jobId: string, project: Project, texts: TextPayload[], opts: ExportOptions, onProgress?: (p: number, speed: string) => void, transform?: (args: string[]) => string[]) {
   const ctrl = new AbortController();
   jobs.set(jobId, ctrl);
   const textFiles = writeTexts(texts, jobId);
@@ -420,7 +430,10 @@ async function runExport(jobId: string, project: Project, texts: TextPayload[], 
     const plan = buildExportArgs(project, textFiles, { ...opts, encoder: enc }, { tempDir: tempDir(), blank });
     for (const f of plan.files) { writeFileSync(f.path, f.content); temp.push(f.path); }
     const started = Date.now();
-    const r = await run(FFMPEG, plan.args, {
+    const args = transform ? transform(plan.args) : plan.args;
+    // для разработчика: KADR_DEBUG=1 сохраняет команду FFmpeg рядом с временными файлами
+    if (process.env.KADR_DEBUG) writeFileSync(join(tempDir(), `ffmpeg-${jobId}.json`), JSON.stringify(args, null, 1));
+    const r = await run(FFMPEG, args, {
       signal: ctrl.signal,
       onStdout: s => {
         const m = [...s.matchAll(/out_time_us=(\d+)/g)].pop();
@@ -434,8 +447,9 @@ async function runExport(jobId: string, project: Project, texts: TextPayload[], 
     let { r, seconds } = await attempt(encoder);
     if (r.code !== 0 && !ctrl.signal.aborted && encoder !== 'cpu') ({ r, seconds } = await attempt('cpu'));
     if (ctrl.signal.aborted) return { ok: false, canceled: true };
-    if (r.code !== 0) return { ok: false, error: lastError(r.stderr) };
-    return { ok: true, outPath: opts.outPath, seconds, encoder };
+    if (r.code !== 0) { log(`Сохранение видео не удалось: ${lastError(r.stderr).replace(/\s+/g, ' ')}`); return { ok: false, error: lastError(r.stderr) }; }
+    log(`Видео сохранено за ${Math.round(seconds)} с (${encoder}, ${opts.format} ${opts.width}×${opts.height})`);
+    return { ok: true, outPath: opts.outPath, seconds, encoder, stderr: transform ? r.stderr : undefined };
   } finally {
     jobs.delete(jobId);
     for (const t of temp) try { unlinkSync(t); } catch { /* уже удалён */ }
@@ -560,8 +574,72 @@ ipcMain.handle('ai:models', (_e, providerId: string, baseUrl?: string) => listMo
 ipcMain.handle('ai:complete', (_e, system: string, user: string) => complete(system, user));
 
 // ── Обработка клипов, звук, запись экрана, обновления ──
-ipcMain.handle('media:process', (_e, jobId: string, kind: ProcessKind, path: string, from: number, to: number) =>
-  processClip(jobId, kind, path, from, to, p => notify('media:process-progress', { jobId, progress: p })));
+ipcMain.handle('media:process', (_e, jobId: string, kind: ProcessKind, path: string, from: number, to: number, opts?: ProcessOpts) =>
+  processClip(jobId, kind, path, from, to, p => notify('media:process-progress', { jobId, progress: p }), opts));
+
+// ── 0.9: отчёты об ошибках ──
+ipcMain.handle('crash:list', () => ({ reports: listReports(), unclean: crashState.unclean, dir: reportsDir() }));
+ipcMain.handle('crash:text', (_e, id: string) => { const r = listReports().find(x => x.id === id); return r ? reportText(r) : ''; });
+ipcMain.handle('crash:report', (_e, message: string, stack?: string) => { saveReport('ui', message, stack); });
+ipcMain.handle('crash:log', (_e, line: string) => log(String(line).slice(0, 500)));
+ipcMain.handle('crash:clear', () => clearReports());
+ipcMain.handle('crash:send', async (_e, ids: string[]) => {
+  const all = listReports().filter(r => ids.includes(r.id));
+  return sendReports(getSettings().reports.url.trim(), all);
+});
+
+// ── 0.9: публикация в YouTube, ВК и Telegram ──
+ipcMain.handle('publish:status', () => publishStatus());
+ipcMain.handle('publish:login', async (_e, p: Platform) => (p === 'youtube' ? youtubeLogin() : p === 'vk' ? vkLogin() : telegramCheck()));
+ipcMain.handle('publish:logout', (_e, p: Platform) => { publishLogout(p); return publishStatus(); });
+ipcMain.handle('publish:run', (e, jobId: string, req: PublishRequest, platforms: Platform[]) =>
+  publish(req, platforms, (platform, k, text) => e.sender.send('publish:progress', { jobId, platform, progress: k, text })));
+ipcMain.handle('file:size', (_e, path: string) => { try { return statSync(path).size; } catch { return -1; } });
+
+// ── 0.9: вложенные клипы, мультикамера, проверка перед публикацией ──
+// Кусок проекта сохраняется в файл — из него получается один «вложенный» клип
+ipcMain.handle('media:render-part', async (_e, jobId: string, project: Project, texts, name: string) => {
+  const dir = join(app.getPath('documents'), 'Хлопушка', 'Обработка');
+  mkdirSync(dir, { recursive: true });
+  const out = join(dir, `${safeName(name)} ${Date.now().toString(36)}.mp4`);
+  const res = await runExport(jobId, project, texts, {
+    outPath: out, format: 'mp4', width: project.width, height: project.height, fps: project.fps, quality: 'best', encoder: getSettings().encoder || 'auto',
+  }, p => notify('media:process-progress', { jobId, progress: p }));
+  if (!res.ok) throw new Error(res.canceled ? 'Отменено' : res.error || 'Не удалось собрать клип');
+  return out;
+});
+
+// Мультикамера: на сколько секунд каждая камера сдвинута относительно первой (по звуку)
+ipcMain.handle('media:sync-audio', async (_e, paths: string[]) => {
+  const SR = 8000;
+  const envs: Float32Array[] = [];
+  for (const p of paths) envs.push(envelope(await pcm(p, SR, 0, 600), SR));
+  return envs.map((env, i) => {
+    if (i === 0) return { offset: 0, confidence: 99 };
+    if (!env.length || !envs[0].length) return { offset: 0, confidence: 0 };
+    return findOffset(envs[0], env);
+  });
+});
+
+// Проверка перед публикацией: быстро «смотрим» весь ролик в маленьком размере и ищем
+// чёрные куски, зависшую картинку, тишину и громкость
+ipcMain.handle('media:preflight', async (_e, jobId: string, project: Project, texts) => {
+  const total = projectDuration(project);
+  const w = Math.max(2, Math.round(Math.min(480, project.width) / 2) * 2);
+  const h = Math.max(2, Math.round((w * project.height) / Math.max(1, project.width) / 2) * 2);
+  const res = await runExport(jobId, project, texts, {
+    outPath: join(tempDir(), jobId + '.mp4'), format: 'mp4', width: w, height: h, fps: Math.min(15, project.fps), quality: 'draft', encoder: 'cpu',
+  }, p => notify('media:process-progress', { jobId, progress: p }), args => {
+    const fi = args.indexOf('-filter_complex');
+    const maps = args.map((a, i) => (a === '-map' ? args[i + 1] : '')).filter(Boolean);
+    const [v, a] = maps;
+    const graph = args[fi + 1] + `;${v}blackdetect=d=0.4:pix_th=0.08,freezedetect=n=-60dB:d=3[pfv];${a}silencedetect=n=-50dB:d=3,ebur128=peak=true[pfa]`;
+    const t = args.indexOf('-t', fi);
+    return [...args.slice(0, fi), '-filter_complex', graph, '-map', '[pfv]', '-map', '[pfa]', '-t', args[t + 1], '-f', 'null', '-'];
+  });
+  if (!res.ok) throw new Error(res.canceled ? 'Отменено' : res.error || 'Проверка не удалась');
+  return parseAnalysis(res.stderr || '', total);
+});
 ipcMain.handle('media:process-cancel', (_e, jobId: string) => cancelProcess(jobId));
 // Удаление фона: подготовка кадров, обмен кадрами и масками с окном программы, сборка видео
 ipcMain.handle('nobg:prepare', (_e, jobId: string, path: string, from: number, to: number, w: number, h: number, fps: number) => bgPrepare(jobId, path, from, to, w, h, fps));

@@ -1,6 +1,6 @@
 // Стартовый экран: выбрать формат нового ролика, открыть недавний проект или пример.
 import { useEffect, useState } from 'react';
-import { Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, Plug, Settings, Sparkles, Undo2, Wand2, X, ScrollText, Smartphone, AppWindow, Diamond, Mic2, ScanFace } from 'lucide-react';
+import { Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, Plug, Settings, Sparkles, Undo2, Wand2, X, ScrollText, Smartphone, AppWindow, Diamond, Mic2, ScanFace, WandSparkles, Send, Video, Crosshair } from 'lucide-react';
 import { api } from '../api';
 import { FORMAT_PRESETS } from '../../shared/timeline';
 import { set, toast, useStore } from '../state/store';
@@ -11,6 +11,10 @@ import { Logo } from './Logo';
 interface Autosave { id: string; name: string; savedAt: number; savedPath: string | null; file: string }
 
 const FEATURES = [
+  { icon: WandSparkles, title: 'Собери ролик сам', text: 'Отдайте сырые записи и скажите, что нужно, — нейросеть соберёт черновик с субтитрами и музыкой.' },
+  { icon: Send, title: 'Публикация в один клик', text: 'Проверка перед выходом (громкость, обрезанные надписи) и отправка в YouTube, ВК и Telegram.' },
+  { icon: Video, title: 'Мультикамера', text: 'Несколько камер выравниваются по звуку сами, а клавиши 1–4 переключают их на ходу.' },
+  { icon: Crosshair, title: 'Слежение за объектом', text: 'Надпись едет за человеком или машиной, номер и логотип размываются по всему клипу.' },
   { icon: Sparkles, title: 'ИИ-помощник', text: 'Пишете «убери паузы и сделай субтитры» — и видите, как он монтирует.' },
   { icon: Plug, title: 'Любая нейросеть', text: 'Claude, ChatGPT, Gemini, DeepSeek, YandexGPT, локальные модели. Плюс MCP для внешних ИИ.' },
   { icon: Undo2, title: 'Ничего не страшно', text: 'Любой шаг отменяется. История шагов показывает, кто и что изменил.' },

@@ -616,3 +616,45 @@ body.pane-dragging video, body.pane-dragging iframe { pointer-events: none; }
 .cover-layout { display: grid; gap: 18px; align-items: start; }
 .cover-canvas { background: repeating-conic-gradient(#20232f 0 25%, #1a1d27 0 50%) 0 0 / 16px 16px; border-radius: 10px; overflow: hidden; display: flex; justify-content: center; }
 .cover-side { display: flex; flex-direction: column; gap: 12px; }
+
+/* ── 0.9 ── */
+.col { display: flex; flex-direction: column; }
+.card .progress, .col > .progress { width: 100%; }
+.track-box { position: absolute; border: 2px solid var(--accent); border-radius: 4px; box-shadow: 0 0 0 1px rgba(0,0,0,.5); pointer-events: none; z-index: 9998; }
+.track-box > span { position: absolute; bottom: -19px; left: -2px; font-size: 10px; padding: 1px 5px; border-radius: 4px; background: var(--accent); color: #fff; white-space: nowrap; }
+.track-box.picking { border-style: dashed; background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.pick-layer { position: absolute; inset: 0; z-index: 10000; cursor: crosshair; background: rgba(0,0,0,.18); }
+.pick-hint { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 12px; border-radius: 20px; background: rgba(0,0,0,.75); color: #fff; font-size: 12.5px; white-space: nowrap; pointer-events: none; }
+.ramp-box { display: flex; flex-direction: column; gap: 6px; }
+.ramp-svg { width: 100%; height: 120px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; touch-action: none; overflow: visible; }
+.ramp-grid { stroke: var(--line); stroke-width: 1; }
+.ramp-one { stroke: var(--line-2); stroke-width: 1; stroke-dasharray: 4 3; }
+.ramp-label { font-size: 8px; fill: var(--muted); }
+.ramp-fill { fill: color-mix(in srgb, var(--accent) 16%, transparent); }
+.ramp-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.ramp-dot { fill: var(--bg); stroke: var(--accent); stroke-width: 2; cursor: grab; }
+.ramp-dot:hover { fill: var(--accent); }
+.cam-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.cam-tile { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; border: 2px solid var(--line-2); background: var(--bg-2) center / cover; cursor: pointer; }
+.cam-tile.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.cam-tile > span { position: absolute; left: 4px; top: 3px; font-size: 11px; font-weight: 700; padding: 0 5px; border-radius: 4px; background: rgba(0,0,0,.65); color: #fff; }
+.issues { display: flex; flex-direction: column; gap: 6px; }
+.issue { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
+.draft-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; max-height: 260px; overflow: auto; padding: 2px; }
+.draft-item { display: flex; flex-direction: column; gap: 3px; text-align: left; padding: 6px; border-radius: 10px; border: 2px solid var(--line); background: var(--raised); cursor: pointer; color: var(--text); font-size: 12px; opacity: .6; }
+.draft-item.on { border-color: var(--accent); opacity: 1; }
+.draft-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-item .thumb { position: relative; aspect-ratio: 16 / 9; border-radius: 6px; background: var(--bg-2) center / cover; }
+.cam-num { position: absolute; left: 5px; top: 4px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 12px; }
+.crash-notice { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); width: min(560px, calc(100vw - 32px)); display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--raised); box-shadow: 0 12px 40px rgba(0,0,0,.35); z-index: 790; }
+.prompter { position: fixed; inset: 0; z-index: 850; background: #000; color: #fff; display: flex; flex-direction: column; }
+.prompter-text { flex: 1; overflow: hidden; position: relative; }
+.prompter-text > div { position: absolute; left: 8%; right: 8%; line-height: 1.35; font-weight: 600; white-space: pre-wrap; will-change: transform; }
+.prompter-line { position: absolute; left: 0; right: 0; top: 33%; height: 0; border-top: 2px solid rgba(255,80,80,.55); pointer-events: none; z-index: 2; }
+.prompter-cam { position: absolute; right: 16px; bottom: 80px; width: 240px; border-radius: 12px; overflow: hidden; border: 2px solid rgba(255,255,255,.25); z-index: 3; background: #111; }
+.prompter-cam video { width: 100%; display: block; transform: scaleX(-1); }
+.prompter-bar { display: flex; gap: 10px; align-items: center; padding: 10px 16px; background: #111; border-top: 1px solid #222; flex-wrap: wrap; }
+.prompter-bar .slider { min-width: 160px; }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #ff3b47; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: .3; } }
+.modal .segmented button { white-space: nowrap; }

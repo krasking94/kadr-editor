@@ -21,16 +21,22 @@ import { ExportDialog } from './components/ExportDialog';
 import { SettingsDialog } from './components/SettingsDialog';
 import { CommandPalette } from './components/CommandPalette';
 import { ShortcutsDialog } from './components/ShortcutsDialog';
+import { CrashNotice, DraftDialog, MulticamDialog, PreflightDialog, PublishDialog } from './components/V09Dialogs';
+import { Prompter } from './components/Prompter';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { autoSendReports, installErrorHooks, loadReports } from './state/crash';
 
 export function App() {
   const screen = useStore(s => s.screen);
   const dialog = useStore(s => s.dialog);
+  const prompter = useStore(s => s.prompter);
   const autosaveMinutes = useStore(s => s.settings.autosaveMinutes);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
 
   // Запуск: настройки, шрифты, связь с ИИ
   useEffect(() => {
+    installErrorHooks();
     loadFonts();
     const offs = [listenToolCalls(), initAssistant(), watchSystemTheme(), watchUpdates()];
     (async () => {
@@ -39,6 +45,8 @@ export function App() {
       set({ info });
       if (!info.ffmpeg.ok) toast('error', 'Не найден FFmpeg', { detail: 'Без него не получится сохранять видео. Переустановите программу.', ttl: 15000 });
       if (info.pendingOpen) openProjectFile(info.pendingOpen);
+      await loadReports().catch(() => undefined);
+      autoSendReports().catch(() => undefined);
     })();
     offs.push(api.onOpenPath((path: string) => openProjectFile(path)));
     offs.push(api.onCloseRequest(async () => { if (await confirmDiscard()) api.confirmClose(); }));
@@ -113,12 +121,18 @@ export function App() {
 
   return (
     <>
-      {screen === 'welcome' ? <Welcome /> : <Editor />}
+      {screen === 'welcome' ? <Welcome /> : <ErrorBoundary><Editor /></ErrorBoundary>}
       {dialog === 'export' && <ExportDialog />}
       {dialog === 'settings' && <SettingsDialog />}
       {dialog === 'palette' && <CommandPalette />}
       {dialog === 'shortcuts' && <ShortcutsDialog />}
       {dialog === 'cover' && <CoverDialog />}
+      {dialog === 'preflight' && <PreflightDialog />}
+      {dialog === 'publish' && <PublishDialog />}
+      {dialog === 'draft' && <DraftDialog />}
+      {dialog === 'multicam' && <MulticamDialog />}
+      {prompter && <Prompter />}
+      <CrashNotice />
       <ConfirmDialog />
       <Tour />
       <Toasts />

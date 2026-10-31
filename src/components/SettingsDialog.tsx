@@ -2,11 +2,13 @@
 import { defaultLayout } from '../../shared/settings';
 import { mirror } from '../../shared/layout';
 import { useEffect, useState } from 'react';
-import { Clapperboard, Stamp } from 'lucide-react';
+import { Clapperboard, Stamp, Send, Bug } from 'lucide-react';
 import { AudioLines, Bot, CheckCircle2, Copy, Cpu, ExternalLink, ImagePlus, Info, Keyboard, KeyRound, Loader2, Palette, Play, Plug, Plus, RefreshCw, Server, Settings as Gear, Trash2 } from 'lucide-react';
 import { ELEVEN_TTS_MODELS, IMAGE_PROVIDERS, imageProvider, VIDEO_MODELS, type Voice } from '../../shared/generators';
 import { api, mediaUrl } from '../api';
-import { defaultBrand, type Brand } from '../../shared/settings';
+import { defaultBrand, defaultPublish, type Brand, type PublishSettings } from '../../shared/settings';
+import { loginPlatform, logoutPlatform, refreshPublishStatus, usePublish, type Platform } from '../state/publish';
+import { clearReports, copyReports, loadReports, sendReports, useCrash } from '../state/crash';
 import { FONTS } from '../lib/fonts';
 import { startTour } from './Tour';
 import { PROVIDERS, providerPreset, SPEECH_PROVIDERS } from '../../shared/providers';
@@ -26,6 +28,8 @@ const NAV = [
   { id: 'brand', label: 'Бренд-кит', icon: Stamp },
   { id: 'mcp', label: 'Внешний ИИ (MCP)', icon: Plug },
   { id: 'export', label: 'Сохранение видео', icon: Cpu },
+  { id: 'publish', label: 'Публикация', icon: Send },
+  { id: 'reports', label: 'Отчёты об ошибках', icon: Bug },
   { id: 'keys', label: 'Горячие клавиши', icon: Keyboard },
   { id: 'about', label: 'О программе', icon: Info },
 ];
@@ -45,6 +49,8 @@ export function SettingsDialog() {
           {tab === 'brand' && <BrandSettings />}
           {tab === 'mcp' && <McpSettings />}
           {tab === 'export' && <ExportSettings />}
+          {tab === 'publish' && <PublishSettingsTab />}
+          {tab === 'reports' && <ReportSettings />}
           {tab === 'keys' && <ShortcutsList />}
           {tab === 'about' && <About />}
         </div>
@@ -542,6 +548,99 @@ function About() {
       <div className="card small-text muted" style={{ lineHeight: 1.6 }}>
         Внутри: Electron, React, FFmpeg (лицензия LGPL/GPL, поставляется отдельной программой), шрифты Onest, Montserrat, Rubik, Unbounded, Oswald, Russo One, Comfortaa, PT Serif, Caveat, Lobster, Press Start 2P, JetBrains Mono (лицензия SIL OFL), иконки Lucide.
       </div>
+    </>
+  );
+}
+
+// ── 0.9: публикация ─────────────────────────────────
+function PublishSettingsTab() {
+  const raw = useStore(st => st.settings.publish);
+  const pub = { ...defaultPublish(), ...raw };
+  const status = usePublish(s => s.status);
+  const who = usePublish(s => s.who);
+  const [busy, setBusy] = useState<Platform | null>(null);
+  useEffect(() => { refreshPublishStatus().catch(() => undefined); }, []);
+  const up = (patch: Partial<PublishSettings>) => saveSettings({ publish: { ...pub, ...patch } });
+  const login = async (p: Platform) => { setBusy(p); await loginPlatform(p); setBusy(null); };
+  const Status = ({ p }: { p: Platform }) => status[p]
+    ? <span style={{ color: 'var(--good)' }}>● подключено{who[p] ? `: ${who[p]}` : ''}</span>
+    : <span style={{ color: 'var(--muted)' }}>● не подключено</span>;
+  return (
+    <>
+      <div className="small-text muted">Готовое видео можно отправить в YouTube, ВКонтакте и Telegram прямо из программы: «Файл → Опубликовать» или Ctrl+Shift+U. Для этого один раз подключите нужные площадки. Пароли программа не видит: вход идёт через окно самой площадки, а ключи хранятся зашифрованными.</div>
+
+      <div className="card" style={{ gap: 10 }}>
+        <div className="row"><b>Telegram</b><span className="spacer" /><Status p="telegram" /></div>
+        <div className="small-text muted">1) В Telegram найдите @BotFather, напишите /newbot и скопируйте ключ. 2) Добавьте бота администратором в свой канал. 3) Впишите сюда ключ и адрес канала. Telegram принимает видео до 50 МБ.</div>
+        <KeyField id="telegram-bot" label="Ключ бота" url="https://t.me/BotFather" />
+        <div className="field"><label>Канал или чат</label><input className="input" value={pub.telegramChat} placeholder="@my_channel" onChange={e => up({ telegramChat: e.target.value.trim() })} /></div>
+        <div className="row">
+          <button className="btn small" disabled={busy === 'telegram'} onClick={() => login('telegram')}>{busy === 'telegram' ? <Loader2 size={13} className="spin" /> : <CheckCircle2 size={13} />} Проверить</button>
+        </div>
+      </div>
+
+      <div className="card" style={{ gap: 10 }}>
+        <div className="row"><b>YouTube</b><span className="spacer" /><Status p="youtube" /></div>
+        <div className="small-text muted">Google просит, чтобы у каждой программы был свой «ключ клиента». Создайте его один раз: Google Cloud → «APIs & Services» → включите «YouTube Data API v3» → «Credentials» → «Create credentials → OAuth client ID» → тип «Desktop app». Скопируйте Client ID (и Client secret, если Google его показал).</div>
+        <div className="field"><label>Client ID <a style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => api.openExternal('https://console.cloud.google.com/apis/credentials')}>Открыть Google Cloud <ExternalLink size={11} /></a></label>
+          <input className="input" value={pub.youtubeClientId} placeholder="123456-abc.apps.googleusercontent.com" onChange={e => up({ youtubeClientId: e.target.value.trim() })} /></div>
+        <KeyField id="youtube-secret" label="Client secret (если есть)" />
+        <div className="field"><label>Кто увидит видео сразу после загрузки</label>
+          <Segmented value={pub.youtubePrivacy} onChange={v => up({ youtubePrivacy: v })} options={[{ value: 'private', label: 'Только я' }, { value: 'unlisted', label: 'По ссылке' }, { value: 'public', label: 'Все' }]} /></div>
+        <div className="row">
+          {status.youtube
+            ? <button className="btn small ghost" onClick={() => logoutPlatform('youtube')}>Выйти из аккаунта</button>
+            : <button className="btn small primary" disabled={!pub.youtubeClientId || busy === 'youtube'} onClick={() => login('youtube')}>{busy === 'youtube' ? <Loader2 size={13} className="spin" /> : <KeyRound size={13} />} Войти через Google</button>}
+        </div>
+      </div>
+
+      <div className="card" style={{ gap: 10 }}>
+        <div className="row"><b>ВКонтакте</b><span className="spacer" /><Status p="vk" /></div>
+        <div className="small-text muted">Создайте приложение на dev.vk.com (тип «Standalone») и впишите его ID. Если видео нужно загружать в сообщество, укажите его номер (цифры из адреса club123456).</div>
+        <div className="field"><label>ID приложения <a style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => api.openExternal('https://dev.vk.com/ru/admin/apps-list')}>Открыть dev.vk.com <ExternalLink size={11} /></a></label>
+          <input className="input" value={pub.vkAppId} placeholder="51234567" onChange={e => up({ vkAppId: e.target.value.replace(/\D/g, '') })} /></div>
+        <div className="field"><label>Сообщество (можно пусто)</label><input className="input" value={pub.vkGroupId} placeholder="123456" onChange={e => up({ vkGroupId: e.target.value.replace(/\D/g, '') })} /></div>
+        <div className="row">
+          {status.vk
+            ? <button className="btn small ghost" onClick={() => logoutPlatform('vk')}>Выйти из аккаунта</button>
+            : <button className="btn small primary" disabled={!pub.vkAppId || busy === 'vk'} onClick={() => login('vk')}>{busy === 'vk' ? <Loader2 size={13} className="spin" /> : <KeyRound size={13} />} Войти во ВКонтакте</button>}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── 0.9: отчёты об ошибках ──────────────────────────
+function ReportSettings() {
+  const raw = useStore(st => st.settings.reports);
+  const rep = raw || { url: '', auto: false };
+  const reports = useCrash(s => s.reports);
+  const dir = useCrash(s => s.dir);
+  useEffect(() => { loadReports().catch(() => undefined); }, []);
+  return (
+    <>
+      <div className="small-text muted">Если программа зависла, закрылась сама или что-то пошло не так, она записывает, что случилось: версию, Windows и место ошибки. Ваших видео, текстов и ключей в отчёте нет. Отчёт можно скопировать и отправить разработчику — так ошибки исправляются быстрее.</div>
+      <div className="card" style={{ gap: 8 }}>
+        <div className="row"><b>Сохранённые отчёты: {reports.length}</b><span className="spacer" />
+          <button className="btn small ghost" disabled={!dir} onClick={() => api.showItem(dir)}>Открыть папку</button></div>
+        {reports.slice(0, 6).map(r => (
+          <div key={r.id} className="row small-text" style={{ gap: 8 }}>
+            <span className="muted mono">{new Date(r.at).toLocaleString('ru-RU')}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} data-tip={r.message}>{r.message}</span>
+            {r.sent && <span style={{ color: 'var(--good)' }}>отправлен</span>}
+          </div>
+        ))}
+        {reports.length > 0 && (
+          <div className="row wrap">
+            <button className="btn small" onClick={() => copyReports(reports.slice(0, 10).map(r => r.id))}><Copy size={13} /> Скопировать</button>
+            {rep.url && <button className="btn small" onClick={() => sendReports(reports.filter(r => !r.sent).map(r => r.id))}><Send size={13} /> Отправить</button>}
+            <button className="btn small ghost" onClick={() => clearReports()}><Trash2 size={13} /> Очистить</button>
+          </div>
+        )}
+      </div>
+      <div className="field"><label>Адрес для отчётов (https://…)</label>
+        <input className="input" value={rep.url} placeholder="Пусто — отчёты только сохраняются на компьютере" onChange={e => saveSettings({ reports: { ...rep, url: e.target.value.trim() } })} /></div>
+      <Switch label="Отправлять отчёты автоматически" hint="При следующем запуске после ошибки отчёт уйдёт сам, без вопросов" checked={rep.auto} onChange={v => saveSettings({ reports: { ...rep, auto: v } })} />
     </>
   );
 }
