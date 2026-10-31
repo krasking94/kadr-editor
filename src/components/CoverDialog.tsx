@@ -13,7 +13,7 @@ import { drawCover, type CoverLayout as Layout } from '../lib/cover';
 
 const LAYOUTS: { value: Layout; label: string; tip: string }[] = [
   { value: 'bottom', label: 'Снизу', tip: 'Текст внизу на тёмной полосе' },
-  { value: 'center', label: 'По центру', tip: 'Огромный текст с обводкой' },
+  { value: 'center', label: 'Центр', tip: 'Огромный текст с обводкой' },
   { value: 'left', label: 'Слева', tip: 'Текст слева, картинка справа' },
   { value: 'top', label: 'Сверху', tip: 'Текст сверху, лицо остаётся видно' },
 ];
