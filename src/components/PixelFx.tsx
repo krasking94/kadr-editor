@@ -2,7 +2,8 @@
 // Формулы те же, что у фильтров FFmpeg (colorkey и lut3d), поэтому в готовом видео будет так же.
 import { useEffect, useRef, type RefObject } from 'react';
 import { api } from '../api';
-import type { ChromaKey } from '../../shared/types';
+import type { ChromaKey, ColorWheels } from '../../shared/types';
+import { applyWheels, hasWheels } from '../../shared/look';
 
 interface Lut { size: number; data: Float32Array }
 const luts = new Map<string, Promise<Lut | null>>();
@@ -61,8 +62,8 @@ function applyKey(px: Uint8ClampedArray, key: ChromaKey) {
   }
 }
 
-export function PixelFx({ source, keyColor, lut, w, h, playing, t }: {
-  source: RefObject<HTMLVideoElement | HTMLImageElement | null>; keyColor?: ChromaKey; lut?: string; w: number; h: number; playing: boolean; t: number;
+export function PixelFx({ source, keyColor, lut, wheels, w, h, playing, t }: {
+  source: RefObject<HTMLVideoElement | HTMLImageElement | null>; keyColor?: ChromaKey; lut?: string; wheels?: ColorWheels; w: number; h: number; playing: boolean; t: number;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const lutRef = useRef<Lut | null>(null);
@@ -82,6 +83,7 @@ export function PixelFx({ source, keyColor, lut, w, h, playing, t }: {
     ctx.drawImage(src, 0, 0, cw, ch);
     const img = ctx.getImageData(0, 0, cw, ch);
     if (lut && lutRef.current) applyLut(img.data, lutRef.current);
+    if (hasWheels(wheels)) applyWheels(img.data, wheels!);
     if (keyColor) applyKey(img.data, keyColor);
     ctx.putImageData(img, 0, 0);
   };
@@ -110,7 +112,7 @@ export function PixelFx({ source, keyColor, lut, w, h, playing, t }: {
     src.addEventListener('load', h2);
     return () => { src.removeEventListener('seeked', h2); src.removeEventListener('loadeddata', h2); src.removeEventListener('load', h2); };
   }, [source.current]);
-  useEffect(() => { if (!playing) draw.current(); }, [t, w, h, keyColor?.color, keyColor?.similarity, keyColor?.blend, lut, playing]);
+  useEffect(() => { if (!playing) draw.current(); }, [t, w, h, keyColor?.color, keyColor?.similarity, keyColor?.blend, lut, JSON.stringify(wheels), playing]);
 
   return <canvas ref={ref} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />;
 }

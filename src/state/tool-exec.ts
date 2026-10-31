@@ -6,7 +6,9 @@ import { clipDuration, findClip, FORMAT_PRESETS, projectDuration } from '../../s
 import { TOOL_TITLES } from '../../shared/tools';
 import * as A from './actions';
 import { commit, get, redo, set, undo } from './store';
-import { generate } from './generate';
+import { generate, videoSourceImage } from './generate';
+import { makeCover } from '../lib/cover';
+import { musicClip } from './media-tools';
 import * as S from './smart';
 import * as SC from './script';
 import * as MT from './media-tools';
@@ -25,7 +27,7 @@ function projectSummary() {
     duration: r2(projectDuration(p)), playhead: r2(s.playhead), selection: s.selection,
     media: p.media.map(m => ({ id: m.id, name: m.name, kind: m.kind, duration: r2(m.duration), width: m.width, height: m.height, hasAudio: m.hasAudio, path: m.path, missing: !!m.missing })),
     tracks: p.tracks.map(t => ({
-      id: t.id, kind: t.kind, name: t.name, muted: t.muted, locked: t.locked, hidden: t.hidden,
+      id: t.id, kind: t.kind, name: t.name, muted: t.muted, locked: t.locked, hidden: t.hidden, ...(t.volume !== undefined ? { volume: t.volume } : {}),
       clips: t.clips.map(c => c.type === 'text'
         ? { id: c.id, type: 'text', text: c.text, start: r2(c.start), end: r2(c.start + c.duration), style: c.style, anim_in: c.animIn, anim_out: c.animOut, subtitle: !!c.subtitle, ...(c.words?.length ? { word_highlight: c.highlight || true } : {}) }
         : {
@@ -34,6 +36,8 @@ function projectSummary() {
           volume: c.volume, muted: c.muted, fit: c.fit, transform: c.transform, animate: c.animate, ...(c.animate ? { transform_end: c.transformEnd } : {}),
           color: c.color, effects: c.effects, transition: c.transition, fade_in: c.fadeIn, fade_out: c.fadeOut, duck: c.duck,
           voice: c.voice, denoise: c.denoise, key: c.key, ...(c.path?.length ? { face_tracking: true } : {}), ...(c.origin ? { processed: c.origin.done } : {}),
+          ...(c.adjust ? { adjustment_layer: true } : {}), ...(c.blend ? { blend: c.blend } : {}), ...(c.crop ? { crop: c.crop } : {}), ...(c.mask ? { mask: c.mask } : {}),
+          ...(c.smooth ? { smooth: true } : {}), ...(c.eq ? { eq: c.eq } : {}), ...(c.faces ? { faces_blurred: c.faces.samples.some(x => x.boxes.length), blur_strength: c.faces.strength } : {}),
         }),
     })),
     markers: p.markers.map(m => ({ time: r2(m.time), label: m.label })),
@@ -95,6 +99,16 @@ export async function execTool(name: string, a: any, source: string): Promise<To
       if (a.color) patch.color = { ...a.color, ...(a.color.lut === '' ? { lut: undefined } : {}) };
       if (a.key !== undefined) patch.key = a.key ? { color: a.key.color || '#00ff00', similarity: a.key.similarity ?? 0.3, blend: a.key.blend ?? 0.1 } : undefined;
       if (a.effects) patch.effects = a.effects;
+      if (a.color && a.color.wheels !== undefined) {
+        const w = a.color.wheels;
+        const one = (x: any) => ({ hue: Number(x?.hue) || 0, amount: Math.max(0, Math.min(1, Number(x?.amount) || 0)) });
+        patch.color = { ...patch.color, wheels: w ? { shadows: one(w.shadows), midtones: one(w.midtones), highlights: one(w.highlights) } : undefined };
+      }
+      if (a.blend !== undefined) patch.blend = a.blend === 'normal' ? undefined : a.blend;
+      if (a.crop !== undefined) patch.crop = a.crop ? { l: a.crop.l || 0, r: a.crop.r || 0, t: a.crop.t || 0, b: a.crop.b || 0 } : undefined;
+      if (a.mask !== undefined) patch.mask = a.mask === 'none' ? undefined : a.mask;
+      if (a.smooth !== undefined) patch.smooth = !!a.smooth;
+      if (a.eq !== undefined) patch.eq = a.eq ? { low: a.eq.low || 0, mid: a.eq.mid || 0, high: a.eq.high || 0, comp: a.eq.comp || 0 } : undefined;
       A.updateMediaClip(a.clip_id, patch, 'Настройки клипа изменены', { source, coalesce: '' });
       return ok('Updated');
     }
@@ -247,6 +261,49 @@ export async function execTool(name: string, a: any, source: string): Promise<To
     case 'select_clips':
       set({ selection: a.clip_ids || [] });
       return ok('Selected');
+    case 'add_adjustment_layer': {
+      const id = await S.addAdjustLayer({ start: a.start, duration: a.duration, source });
+      return ok('Adjustment layer added; change its look with update_clip (color, effects)', { clip_id: id });
+    }
+    case 'auto_color':
+      return ok('Color fixed', await S.autoColor(a.clip_id, source));
+    case 'blur_faces':
+      return ok('Faces blurred', await S.blurFaces(a.clip_id, { strength: a.strength, source }));
+    case 'fit_music': {
+      const c = a.clip_id || musicClip()?.id;
+      if (!c) return { text: 'No music clip on audio tracks', isError: true };
+      const r = await S.fitMusic(c, { source });
+      return ok('Music fitted', { ends_at: r2(r.end), loops: r.copies });
+    }
+    case 'add_title_template':
+      return ok('Title added', { clip_ids: S.addTitleTemplate(a.template, { texts: a.texts, start: a.start, source }) });
+    case 'apply_brand': {
+      const out: Record<string, unknown> = {};
+      if (a.logo) out.logo_clip = await S.addBrandLogo({ source });
+      if (a.texts) out.texts_restyled = S.applyBrandToTexts({ source });
+      return ok('Brand applied', out);
+    }
+    case 'set_track': {
+      const t = s.project.tracks.find(x => x.id === a.track_id);
+      if (!t) return { text: 'No such track', isError: true };
+      const patch: Partial<typeof t> = {};
+      if (a.volume !== undefined) patch.volume = Math.max(0, Math.min(2, Number(a.volume)));
+      for (const k of ['muted', 'hidden', 'locked'] as const) if (a[k] !== undefined) patch[k] = !!a[k];
+      if (a.name) patch.name = String(a.name);
+      A.updateTrack(t.id, patch, `Дорожка «${t.name}» изменена`);
+      return ok('Track updated');
+    }
+    case 'make_cover': {
+      const path = await makeCover({ time: a.time, title: String(a.title || ''), sub: a.subtitle, layout: a.layout, color: a.color });
+      return ok('Cover saved', { path });
+    }
+    case 'generate_video': {
+      let image: string | undefined;
+      if (a.image_media_id) image = s.project.media.find(m => m.id === a.image_media_id && m.kind === 'image')?.path;
+      else if (a.animate_frame) image = (await videoSourceImage())?.path;
+      const r = await generate({ kind: 'video', prompt: String(a.prompt || ''), image, duration: a.duration, place: a.place || 'main', index: a.index, start: a.start }, source);
+      return ok('Video created', { media_id: r.media.id, clip_id: r.clipId, duration: r2(r.duration), file: r.path });
+    }
     case 'undo':
       undo();
       return ok('Undone');

@@ -42,6 +42,8 @@ const textStyleSchema = obj({
   maxWidth: num('Max width as fraction of frame width'),
 });
 
+const wheelSchema = obj({ hue: num('Direction in degrees: 0 red, 30 orange, 60 yellow, 120 green, 180 teal, 220 blue, 300 magenta'), amount: num('Strength 0..1 (0.3 is subtle, 0.7 strong)') });
+
 const anim = str('Text animation', ['none', 'fade', 'slide-up', 'slide-down', 'slide-left', 'slide-right', 'zoom']);
 
 export const TOOLS: ToolDef[] = [
@@ -120,6 +122,9 @@ export const TOOLS: ToolDef[] = [
         saturation: num('0..3, 1 = unchanged'), gamma: num('0.1..3, 1 = unchanged'),
         temperature: num('-1 cold .. 1 warm'),
         lut: str('Absolute path to a .cube LUT file (film look); empty string removes it'),
+        wheels: { anyOf: [obj({
+          shadows: wheelSchema, midtones: wheelSchema, highlights: wheelSchema,
+        }), { type: 'null' }], description: 'Color wheels (lift/gamma/gain style tint): shift hue separately for shadows, midtones and highlights. Teal shadows + orange highlights = cinematic. null resets.' },
       }),
       effects: obj({
         blur: num('0..1'), vignette: num('0..1'), sharpen: num('0..1'), grain: num('0..1'),
@@ -128,6 +133,11 @@ export const TOOLS: ToolDef[] = [
       duck: bool('For music on the audio track: lower it automatically under speech'),
       voice: bool('Studio voice: clean EQ and compression for speech'),
       denoise: num('Noise reduction 0..1 (0 = off, 0.5 = typical)'),
+      blend: str('Blend mode with layers below (overlay tracks only): screen/add for light leaks and fire on black, multiply for paper textures', ['normal', 'screen', 'add', 'lighten', 'multiply', 'darken', 'overlay', 'softlight', 'difference']),
+      crop: { anyOf: [obj({ l: num('Cut from left, fraction 0..0.45'), r: num('Right'), t: num('Top'), b: num('Bottom') }), { type: 'null' }], description: 'Crop edges of the source. null removes.' },
+      mask: str('Layer shape: circle = round bubble like Telegram video messages', ['none', 'rounded', 'ellipse', 'circle']),
+      smooth: bool('Smooth slow motion: generate in-between frames when speed < 1 (slower export)'),
+      eq: { anyOf: [obj({ low: num('Bass dB -12..12'), mid: num('Mids dB -12..12'), high: num('Treble dB -12..12'), comp: num('Compressor 0..1 (0 = off)') }), { type: 'null' }], description: 'Equalizer and compressor for the clip audio. null resets.' },
       key: { anyOf: [obj({
         color: str('Background color to remove, #rrggbb (green #00ff00, blue #0000ff)'),
         similarity: num('0..1, how close a color must be to be removed, default 0.3'),
@@ -362,6 +372,67 @@ export const TOOLS: ToolDef[] = [
     }, ['prompt']),
   },
   {
+    name: 'add_adjustment_layer', title: 'Добавляю корректирующий слой',
+    description: 'Add an adjustment layer on top of all overlays: it has no picture of its own, its color and effects (set later with update_clip: color, wheels, lut, effects) apply to everything below it. Good for grading the whole video at once.',
+    inputSchema: obj({ start: num('Timeline start, default 0'), duration: num('Seconds, default to the end of the video') }),
+  },
+  {
+    name: 'auto_color', title: 'Выравниваю цвет',
+    description: 'Automatically fix brightness, contrast, saturation and white balance of a video/photo clip by analyzing its frame under the playhead.',
+    inputSchema: obj({ clip_id: str('Clip id') }, ['clip_id']),
+  },
+  {
+    name: 'blur_faces', title: 'Размываю лица',
+    description: 'Find all faces in a video clip (offline neural network) and blur them for the whole clip. For privacy of passers-by.',
+    inputSchema: obj({ clip_id: str('Video clip id'), strength: num('0..1, default 0.6') }, ['clip_id']),
+  },
+  {
+    name: 'fit_music', title: 'Подгоняю музыку',
+    description: 'Make a music clip on the audio track end exactly with the video: trims it on a beat with a fade-out, or loops it if the track is too short.',
+    inputSchema: obj({ clip_id: str('Music clip id (default: first music clip)') }),
+  },
+  {
+    name: 'add_title_template', title: 'Добавляю титр',
+    description: 'Insert a ready animated title made of several texts, styled with the user brand kit. Templates: lower-third (name + role), intro (big title + tagline), subscribe (call to subscribe), chapter (number + section name), sale (big price/discount + condition), question (ask viewers to comment), outro (thanks + channel name).',
+    inputSchema: obj({
+      template: str('Template id', ['lower-third', 'intro', 'subscribe', 'chapter', 'sale', 'question', 'outro']),
+      texts: { type: 'array', items: { type: 'string' }, description: 'Texts in order (e.g. ["Анна Смирнова", "шеф-повар"]); missing ones use defaults' },
+      start: num('Timeline start, default playhead'),
+    }, ['template']),
+  },
+  {
+    name: 'apply_brand', title: 'Применяю бренд-кит',
+    description: 'Use the brand kit from settings: logo=true puts the logo in its corner for the whole video; texts=true applies brand font and colors to all texts (not subtitles).',
+    inputSchema: obj({ logo: bool('Add logo'), texts: bool('Restyle texts') }),
+  },
+  {
+    name: 'set_track', title: 'Меняю дорожку',
+    description: 'Change a whole track: volume (mixer, 0..2), mute, hide, lock, rename.',
+    inputSchema: obj({ track_id: str('Track id from get_project'), volume: num('0..2, 1 = normal'), muted: bool('Mute'), hidden: bool('Hide picture'), locked: bool('Lock'), name: str('New name') }, ['track_id']),
+  },
+  {
+    name: 'make_cover', title: 'Делаю обложку',
+    description: 'Make a thumbnail (cover image) for YouTube/Reels from the frame at a time with a big bold title. Saves a PNG and returns its path.',
+    inputSchema: obj({
+      time: num('Timeline time of the frame, default playhead'),
+      title: str('Big title, 2-6 words'), subtitle: str('Optional small plate text'),
+      layout: str('Where the text goes', ['bottom', 'center', 'left', 'top']),
+      color: str('Title color, default yellow #ffe14d'),
+    }, ['title']),
+  },
+  {
+    name: 'generate_video', title: 'Снимаю ИИ-видео',
+    description: 'Generate a short AI video clip (5 or 10 s) with fal.ai (Kling/Veo/Wan, model chosen in settings) from a text prompt, or animate a still image (image_media_id, or animate_frame=true for the frame under the playhead). Takes 1-5 minutes and costs the user money, so only use when asked. The result is imported and placed on the timeline.',
+    inputSchema: obj({
+      prompt: str('What happens in the video; for animating a photo describe the motion. English often works better'),
+      image_media_id: str('Image from the library to animate'),
+      animate_frame: bool('Animate the current frame under the playhead'),
+      duration: num('5 or 10 seconds'),
+      place: str('Where to put it', ['main', 'overlay', 'none']),
+      index: num('Main track position'), start: num('Overlay start'),
+    }),
+  },
+  {
     name: 'undo', title: 'Отменяю', description: 'Undo the last change.', inputSchema: obj({}),
   },
   {
@@ -395,4 +466,6 @@ Rules:
 - For bad sound use studio_voice; for "эээ" and filler words use remove_fillers; for shaky video use stabilize_clip; to cut a person out of the background without a green screen use remove_background (chroma key via update_clip.key only for real green/blue screens).
 - When asked for chapters, a description or hashtags, base them on the transcript (transcribe) and answer in text; add markers only if the user asks.
 - To remove specific phrases, repeats, mistakes or off-topic talk, use get_transcript then cut_transcript (text-based editing).
-- To turn a long video into Reels/Shorts use find_shorts then make_shorts. For music videos use beat_sync.`;
+- To turn a long video into Reels/Shorts use find_shorts then make_shorts. For music videos use beat_sync.
+- Color grading: auto_color first, then update_clip color.wheels for a look; to grade everything at once use add_adjustment_layer and update it. Blur strangers with blur_faces.
+- Titles: prefer add_title_template (brand colors) over plain add_text for name plates, intros, calls to subscribe and outros. make_cover makes a thumbnail. fit_music makes music end with the video.`;

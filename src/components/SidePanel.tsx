@@ -3,14 +3,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Blend, Camera, Captions, Clapperboard, Film, FolderOpen, Image as ImageIcon, Layers, Mic, Music, Plus, Scissors,
   Sparkles, Square, Trash2, Type, Upload, Video, Wand2, WandSparkles, AudioLines, TriangleAlert, ImagePlus, Loader2, Speech, Volume2, Play,
-  Smile, Monitor, Languages, ScrollText, FileDown, FileUp, Eraser, Smartphone, Mic2, Gauge, BookOpenText, Clapperboard as Director,
+  Smile, Monitor, Languages, ScrollText, FileDown, FileUp, Eraser, Smartphone, Mic2, Gauge, BookOpenText, Clapperboard as Director, Stamp,
 } from 'lucide-react';
+import { defaultBrand, type Brand } from '../../shared/settings';
 import * as S from '../state/smart';
 import * as MT from '../state/media-tools';
 import { ScriptPanel, ShortsPanel } from './ScriptPanel';
 import { EMOJI, SHAPES, SHAPE_COLORS, renderShape } from '../lib/stickers';
 import { imageProvider, type Voice } from '../../shared/generators';
-import { generate, cleanError, projectAspect, type GenKind } from '../state/generate';
+import { generate, cleanError, projectAspect, videoSourceImage, type GenKind } from '../state/generate';
 import { api, mediaUrl } from '../api';
 import type { MediaClip, MediaItem, TransitionType } from '../../shared/types';
 import { COLOR_PRESETS, findClip, formatTime, mainTrack, projectDuration, TRANSITIONS } from '../../shared/timeline';
@@ -166,7 +167,9 @@ function TextPanel() {
       <div className="panel-head"><Type size={16} /><h3>Текст</h3></div>
       <div className="panel-body">
         <button className="btn primary" style={{ width: '100%' }} onClick={() => { A.addText('Ваш текст'); set({ inspectorTab: 'text' }); }}><Plus size={15} /> Добавить текст <kbd style={{ marginLeft: 'auto' }}>T</kbd></button>
-        <div className="section-title" style={{ marginTop: 16 }}>Готовые стили</div>
+        <div className="section-title" style={{ marginTop: 16 }}>Готовые титры</div>
+        <TitleTemplates />
+        <div className="section-title">Готовые стили</div>
         <div className="tile-grid">
           {TEXT_PRESETS.map(p => (
             <button key={p.id} className="tile" draggable
@@ -191,6 +194,50 @@ function TextPanel() {
       </div>
     </>
   );
+}
+
+function TitleTemplates() {
+  const raw = useStore(s => s.settings.brand);
+  const b = { ...defaultBrand(), ...raw };
+  return (
+    <>
+      <div className="tile-grid">
+        {S.TITLE_TEMPLATES.map(t => (
+          <button key={t.id} className="tile" data-tip={t.tip + '. Встанет с места линии времени, текст можно поменять справа'} onClick={() => { try { S.addTitleTemplate(t.id); } catch (e) { toast('error', 'Не получилось', { detail: String(e) }); } }}>
+            <div className="t-prev tpl-prev" style={{ fontFamily: b.font }}>
+              <TemplatePreview id={t.id} b={b} />
+            </div>
+            <span className="t-name">{t.name}</span>
+          </button>
+        ))}
+      </div>
+      <div className="card" style={{ gap: 8, marginTop: 10 }}>
+        <div className="row"><Stamp size={15} color="var(--accent)" /><b>Бренд-кит</b><span className="spacer" />
+          {[b.primary, b.accent, b.text].map((c, i) => <span key={i} style={{ width: 14, height: 14, borderRadius: 4, background: c, border: '1px solid var(--line-2)' }} />)}
+        </div>
+        <div className="small-text muted">{b.name ? `«${b.name}», шрифт ${b.font}.` : 'Свои цвета, шрифт и логотип.'} Титры выше уже берут цвета бренда.</div>
+        <div className="row wrap" style={{ gap: 6 }}>
+          <button className="btn small" disabled={!b.logo} data-tip={b.logo ? 'Логотип встанет в угол на весь ролик' : 'Сначала выберите логотип в настройках бренд-кита'} onClick={() => S.addBrandLogo().catch(e => toast('error', 'Не получилось', { detail: String(e) }))}>Логотип в угол</button>
+          <button className="btn small" data-tip="Шрифт и цвета бренда — всем надписям проекта" onClick={() => { const n = S.applyBrandToTexts(); toast('success', n ? `Бренд применён к надписям: ${n}` : 'В проекте пока нет надписей'); }}>Ко всем надписям</button>
+          <button className="btn small ghost" onClick={() => set({ dialog: 'settings', settingsTab: 'brand' })}>Настроить</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function TemplatePreview({ id, b }: { id: string; b: Brand }) {
+  const plate = (bg: string, color: string, size: number, text: string, extra: React.CSSProperties = {}) =>
+    <span style={{ background: bg, color, fontSize: size, fontWeight: 700, padding: '1px 5px', lineHeight: 1.25, whiteSpace: 'nowrap', ...extra }}>{text}</span>;
+  switch (id) {
+    case 'lower-third': return <div style={{ position: 'absolute', left: 8, bottom: 8, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>{plate(b.primary, b.text, 11, 'Иван Петров')}{plate('#111318', '#fff', 8, 'основатель', { fontWeight: 400 })}</div>;
+    case 'intro': return <div style={{ textAlign: 'center' }}><div style={{ fontFamily: 'Unbounded', fontWeight: 700, fontSize: 12, color: b.text }}>Как я построил</div>{plate(b.accent, '#111318', 8, 'ЗА 30 ДНЕЙ')}</div>;
+    case 'subscribe': return <div style={{ textAlign: 'center' }}>{plate('#ff2d3d', '#fff', 10, '👆 ПОДПИШИСЬ')}</div>;
+    case 'chapter': return <div style={{ textAlign: 'center', lineHeight: 1 }}><div style={{ fontFamily: 'Unbounded', fontSize: 20, fontWeight: 700, color: b.accent }}>01</div><div style={{ fontSize: 9, fontWeight: 700, color: b.text }}>ПОДГОТОВКА</div></div>;
+    case 'sale': return <div style={{ textAlign: 'center', lineHeight: 1.1 }}><div style={{ fontFamily: 'Russo One', fontSize: 20, color: '#ffe14d', WebkitTextStroke: '1px #000' }}>−30%</div>{plate(b.primary, '#fff', 7, 'до воскресенья')}</div>;
+    case 'question': return <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, fontWeight: 700, color: b.text, WebkitTextStroke: '0.5px #000' }}>А вы как думаете?</div>{plate(b.accent, '#111318', 7, 'Пишите 👇')}</div>;
+    default: return <div style={{ textAlign: 'center' }}><div style={{ fontFamily: 'Unbounded', fontSize: 10, fontWeight: 700, color: b.text }}>Спасибо!</div>{plate(b.accent, '#111318', 7, b.name || '@канал')}</div>;
+  }
 }
 
 const LANGS = ['English', 'Русский', 'Українська', 'Қазақша', 'Deutsch', 'Español', 'Français', 'Italiano', 'Português', 'Türkçe', '中文', '日本語', 'العربية', 'हिन्दी'];
@@ -365,6 +412,8 @@ function FiltersPanel() {
       <div className="panel-body">
         {!clips.length && <div className="tip-card" style={{ marginBottom: 12 }}><Wand2 size={18} color="var(--accent)" style={{ flex: 'none' }} /><div>Щёлкните по клипу на таймлайне, потом выберите фильтр. Можно выбрать несколько клипов с Ctrl.</div></div>}
         {clips.length > 1 && <div className="badge accent" style={{ marginBottom: 10, display: 'inline-block' }}>Применится к {clips.length} клипам</div>}
+        <button className="btn small" style={{ width: '100%', marginBottom: 6 }} data-tip={'Прозрачный слой над видео: его цвет и эффекты меняют всё, что под ним.\nУдобно покрасить сразу весь ролик или кусок из многих клипов'}
+          onClick={() => S.addAdjustLayer().catch(e => toast('error', 'Не получилось', { detail: String(e) }))}><Layers size={14} /> Корректирующий слой</button>
         <div className="section-title">Цвет</div>
         <div className="preset-grid">
           {Object.entries(COLOR_PRESETS).map(([id, p]) => (
@@ -685,6 +734,8 @@ const KINDS: { value: GenKind; label: string; icon: typeof Film; placeholder: st
     ideas: ['Whoosh transition', 'Crowd applause', 'Camera shutter click', 'Notification ding'] },
   { value: 'music', label: 'Музыка', icon: Music, placeholder: 'Какая музыка? Жанр, настроение, темп, инструменты',
     ideas: ['Спокойный лоу-фай с пианино для влога', 'Энергичный электро-поп для рекламы', 'Эпичная оркестровая музыка для трейлера'] },
+  { value: 'video', label: 'Видео', icon: Clapperboard, placeholder: 'Что должно происходить в ролике? Например: камера медленно облетает чашку кофе на деревянном столе, утренний свет',
+    ideas: ['Медленный пролёт над осенним лесом на рассвете', 'Кот в очках читает газету в кафе, мультяшный стиль', 'Человек на фото улыбается и машет рукой'] },
 ];
 
 let voicesCache: Voice[] | null = null;
@@ -709,14 +760,24 @@ function CreatePanel() {
   const k = KINDS.find(x => x.value === kind)!;
   const prompt = prompts[kind] || '';
   const ip = imageProvider(settings.gen.imageProvider);
-  const keyOk = kind === 'image' ? (ip.id === 'custom-image' || !!secrets[ip.keyId]) : !!secrets.elevenlabs;
+  const keyOk = kind === 'image' ? (ip.id === 'custom-image' || !!secrets[ip.keyId]) : kind === 'video' ? !!secrets.fal : !!secrets.elevenlabs;
+  const [vMode, setVMode] = useState<'text' | 'photo'>('text');
+  const [vDur, setVDur] = useState(settings.gen.videoDuration || 5);
   useEffect(() => {
     if (kind === 'speech' && secrets.elevenlabs && !voicesCache) api.genVoices().then((v: Voice[]) => { voicesCache = v; setVoices(v); }).catch(() => undefined);
   }, [kind, !!secrets.elevenlabs]);
   const run = async () => {
-    if (!prompt.trim() || busy) return;
+    if ((!prompt.trim() && !(kind === 'video' && vMode === 'photo')) || busy) return;
     setBusy(kind);
     try {
+      if (kind === 'video') {
+        const img = vMode === 'photo' ? await videoSourceImage() : null;
+        if (vMode === 'photo' && !img) { toast('info', 'Нечего оживлять', { detail: 'Выберите фото на таймлайне или поставьте курсор на нужный кадр.' }); setBusy(null); return; }
+        if (img) toast('info', `Оживляю ${img.label === 'кадр под курсором' ? 'кадр под курсором' : `«${img.label}»`}`, { detail: 'Обычно это занимает 1–5 минут. Можно продолжать монтаж.' });
+        await generate({ kind, prompt: prompt.trim(), image: img?.path, duration: vDur, place: place === 'none' ? 'none' : place });
+        setBusy(null);
+        return;
+      }
       await generate({
         kind, prompt: prompt.trim(),
         ...(kind === 'image' ? { place, duration: imgDur, animate: place === 'main' && zoom } : {}),
@@ -729,7 +790,7 @@ function CreatePanel() {
     }
     setBusy(null);
   };
-  const service = kind === 'image' ? ip.label : 'ElevenLabs';
+  const service = kind === 'image' ? ip.label : kind === 'video' ? 'fal.ai' : 'ElevenLabs';
   return (
     <>
       <div className="panel-head"><ImagePlus size={16} /><h3>Создать нейросетью</h3></div>
@@ -767,6 +828,22 @@ function CreatePanel() {
             </div>
           )}
           {kind === 'speech' && <div className="small-text muted">Озвучка встанет на звуковую дорожку с места курсора.</div>}
+          {kind === 'video' && <>
+            <Segmented value={vMode} onChange={setVMode} options={[
+              { value: 'text', label: 'По описанию', tip: 'Нейросеть снимет ролик с нуля по вашему тексту' },
+              { value: 'photo', label: 'Оживить фото', tip: 'Выбранное на таймлайне фото (или кадр под курсором) начнёт двигаться' },
+            ]} />
+            <div className="row" style={{ gap: 6 }}>
+              <span className="small-text muted">Длина:</span>
+              {[5, 10].map(d => <button key={d} className="chip" onClick={() => setVDur(d)} style={vDur === d ? { borderColor: 'var(--accent)', color: 'var(--text)', background: 'var(--accent-soft)' } : undefined}>{d} с</button>)}
+            </div>
+            <Segmented value={place} onChange={setPlace} options={[
+              { value: 'main', label: 'В ролик', tip: 'В конец основной дорожки' },
+              { value: 'overlay', label: 'Поверх', tip: 'Картинка в картинке с места курсора' },
+              { value: 'none', label: 'В файлы', tip: 'Сохранить в медиатеку' },
+            ]} />
+            <div className="small-text muted">{vMode === 'photo' ? 'Опишите движение: «улыбается и машет», «камера наезжает». ' : ''}Видео снимается 1–5 минут и стоит примерно 20–150 ₽ за ролик (зависит от модели). Пропорции — как у проекта ({projectAspect()}).</div>
+          </>}
           {kind === 'sfx' && <Slider label="Длительность" value={sfxDur} min={0} max={30} step={0.5} def={0} unit=" с" format={v => (v ? v + ' с' : 'авто')} onChange={setSfxDur} />}
           {kind === 'music' && <>
             <Slider label="Длительность" value={musicDur || projLen} min={10} max={300} step={5} def={projLen} unit=" с" onChange={setMusicDur} />
@@ -775,8 +852,8 @@ function CreatePanel() {
             <div className="small-text muted">Музыка встанет с начала ролика и сама станет тише, когда говорят.</div>
           </>}
           {!keyOk && <div className="small-text" style={{ color: 'var(--warn)' }}>Нужен ключ «{service}». <a style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => set({ dialog: 'settings', settingsTab: 'gen' })}>Вставить ключ</a></div>}
-          <button className="btn primary" disabled={!prompt.trim() || !!busy || !project} onClick={run}>
-            {busy === kind ? <><Loader2 size={14} className="spin" /> {kind === 'music' ? 'Пишу музыку, до минуты…' : 'Создаю…'}</> : <><WandSparkles size={14} /> Создать</>}
+          <button className="btn primary" disabled={(!prompt.trim() && !(kind === 'video' && vMode === 'photo')) || !!busy || !project} onClick={run}>
+            {busy === kind ? <><Loader2 size={14} className="spin" /> {kind === 'music' ? 'Пишу музыку, до минуты…' : kind === 'video' ? 'Снимаю, 1–5 минут…' : 'Создаю…'}</> : <><WandSparkles size={14} /> Создать</>}
           </button>
           <div className="small-text muted" style={{ textAlign: 'center' }}>{service} · <a style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => set({ dialog: 'settings', settingsTab: 'gen' })}>настройки</a> · Ctrl+Enter</div>
         </div>

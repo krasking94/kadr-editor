@@ -1,9 +1,10 @@
 // Главный процесс «Хлопушки»: окно, доступ к файлам, FFmpeg, ИИ и MCP.
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, screen } from 'electron';
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, screen } from 'electron';
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import type { ExportOptions, Project } from '../shared/types';
 import { buildExportArgs } from '../shared/export-graph';
 import { projectDuration } from '../shared/timeline';
@@ -16,7 +17,7 @@ import { detectBeats } from '../shared/beats';
 import { estimateWords } from '../shared/speech';
 import { checkForUpdates, downloadUpdate, installUpdate, updateState } from './updater';
 import { clientStatus, mcpServerState, startMcpServer, stopMcpServer, syncClients } from './mcp';
-import { generateImage, generateMusic, generateSoundEffect, generateSpeech, listVoices } from './generate';
+import { cancelVideo, generateImage, generateMusic, generateSoundEffect, generateSpeech, generateVideo, listVoices } from './generate';
 import { bridgeSelfTest, connectClaudeDesktop, desktopEntry, desktopStatus } from './desktop-link';
 
 // До версии 0.3 программа называлась «Кадр» (Kadr). Настройки, ключи нейросетей, список проектов
@@ -331,6 +332,64 @@ ipcMain.handle('media:save-image', (_e, dataUrl: string, name: string) => {
   return dataUrlToFile(dataUrl, join(dir, safeName(name) + '.png'));
 });
 
+// 0.7: логотип, обложка, вставка из буфера обмена и перетаскивание из браузера
+ipcMain.handle('dialog:open-image', async (_e, title?: string) => {
+  const r = await dialog.showOpenDialog(win!, { title: title || 'Выберите картинку', properties: ['openFile'], filters: [{ name: 'Картинки', extensions: ['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif', 'bmp'] }] });
+  return r.canceled ? null : r.filePaths[0];
+});
+ipcMain.handle('media:save-image-as', (_e, dataUrl: string, path: string) => dataUrlToFile(dataUrl, path));
+const pastedDir = () => { const d = join(app.getPath('documents'), 'Хлопушка', 'Вставки'); mkdirSync(d, { recursive: true }); return d; };
+const stampName = (base: string, ext: string) => `${safeName(base).slice(0, 60) || 'Вставка'} ${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}.${ext}`;
+const MEDIA_EXT = /\.(mp4|mov|m4v|mkv|webm|avi|png|jpe?g|webp|gif|bmp|mp3|wav|ogg|m4a|aac|flac|opus)$/i;
+ipcMain.handle('media:save-bytes', (_e, data: ArrayBuffer, name: string) => {
+  const ext = (extname(name).slice(1) || 'png').toLowerCase();
+  const file = join(pastedDir(), stampName(name.replace(/\.[^.]+$/, ''), ext));
+  writeFileSync(file, Buffer.from(data));
+  return file;
+});
+ipcMain.handle('media:download', async (_e, url: string) => {
+  if (!/^https?:\/\//i.test(url)) throw new Error('Это не ссылка на файл');
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Сайт не отдал файл (${r.status})`);
+  const type = r.headers.get('content-type') || '';
+  if (!/^(image|video|audio)\//.test(type) && !MEDIA_EXT.test(new URL(url).pathname)) throw new Error('По ссылке не картинка, не видео и не звук');
+  const fromUrl = decodeURIComponent(new URL(url).pathname.split('/').pop() || '');
+  const ext = (MEDIA_EXT.exec(fromUrl)?.[1] || type.split('/')[1]?.split(/[;+]/)[0] || 'bin').replace('jpeg', 'jpg').replace('quicktime', 'mov').replace('mpeg', 'mp3');
+  const file = join(pastedDir(), stampName(fromUrl.replace(/\.[^.]+$/, '') || 'Из браузера', ext));
+  writeFileSync(file, Buffer.from(await r.arrayBuffer()));
+  return file;
+});
+// Что лежит в буфере обмена: скопированные в Проводнике файлы, картинка (скриншот) или ссылка.
+// Окно программы сначала смотрит само (событие «вставить»), сюда приходит, если там пусто.
+ipcMain.handle('clipboard:media', async () => {
+  const RAW = 'electron application/osclipboard;format="FileNameW"';
+  try {
+    const items = await clipboard.read();
+    for (const it of items) {
+      const fileType = it.types.find(t => t === RAW || t === 'text/uri-list');
+      if (fileType) {
+        const blob = (await it.getType(fileType)) as Blob;
+        const buf = Buffer.from(await blob.arrayBuffer());
+        const text = fileType === RAW ? buf.toString('utf16le') : buf.toString('utf8');
+        const paths = text.split(/[\0\r\n]+/).map(x => x.trim()).filter(Boolean)
+          .map(x => { try { return x.startsWith('file:') ? fileURLToPath(x) : x; } catch { return ''; } })
+          .filter(x => x && existsSync(x) && MEDIA_EXT.test(x));
+        if (paths.length) return { paths };
+      }
+      const imgType = it.types.find(t => t.startsWith('image/'));
+      if (imgType) {
+        const blob = (await it.getType(imgType)) as Blob;
+        const file = join(pastedDir(), stampName('Снимок', imgType.includes('jpeg') ? 'jpg' : 'png'));
+        writeFileSync(file, Buffer.from(await blob.arrayBuffer()));
+        return { paths: [file], image: true };
+      }
+    }
+  } catch { /* буфер занят другой программой или формат незнаком */ }
+  const text = (await clipboard.readText().catch(() => '')).trim();
+  if (/^https?:\/\/\S+$/i.test(text)) return { url: text };
+  return {};
+});
+
 // ── Экспорт ──────────────────────────────────────────
 const jobs = new Map<string, AbortController>();
 
@@ -529,6 +588,8 @@ ipcMain.handle('gen:speech', (_e, text: string, voiceId?: string, model?: string
 ipcMain.handle('gen:sfx', (_e, prompt: string, duration?: number) => generateSoundEffect(prompt, duration));
 ipcMain.handle('gen:music', (_e, prompt: string, duration?: number, instrumental?: boolean) => generateMusic(prompt, duration, instrumental));
 ipcMain.handle('gen:voices', () => listVoices());
+ipcMain.handle('gen:video', (e, jobId: string, prompt: string, o) => generateVideo(jobId, prompt, o, text => e.sender.send('gen:video-status', { jobId, text })));
+ipcMain.handle('gen:video-cancel', (_e, jobId: string) => cancelVideo(jobId));
 ipcMain.handle('mcp:desktop-status', () => desktopStatus(getSettings().mcp.port));
 ipcMain.handle('mcp:desktop-connect', () => connectClaudeDesktop(getSettings().mcp.port));
 ipcMain.handle('mcp:desktop-entry', () => desktopEntry(getSettings().mcp.port));

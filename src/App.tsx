@@ -5,6 +5,9 @@ import { api } from './api';
 import { get, set, toast, useStore } from './state/store';
 import { confirmDiscard, importFiles, openNewProject, openProjectFile, watchUpdates } from './state/actions';
 import { listenToolCalls } from './state/tool-exec';
+import { dropFromBrowser, smartPaste } from './state/paste';
+import { Tour } from './components/Tour';
+import { CoverDialog } from './components/CoverDialog';
 import { initAssistant } from './state/assistant';
 import { loadSettings, watchSystemTheme } from './state/settings-actions';
 import { handleKey } from './lib/commands';
@@ -60,9 +63,23 @@ export function App() {
     return () => clearInterval(t);
   }, [autosaveMinutes]);
 
-  // Файлы, перетащенные на окно из Проводника
+  // Ctrl+V: картинка, скриншот, файлы или ссылка из буфера обмена, иначе — скопированные клипы
   useEffect(() => {
-    const isFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+    const h = (e: ClipboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      const s = get();
+      if (!s.project || s.screen !== 'editor' || (s.dialog && s.dialog !== 'palette')) return;
+      e.preventDefault();
+      smartPaste(e.clipboardData);
+    };
+    window.addEventListener('paste', h);
+    return () => window.removeEventListener('paste', h);
+  }, []);
+
+  // Файлы, перетащенные на окно из Проводника или из браузера
+  useEffect(() => {
+    const isFiles = (e: DragEvent) => !!e.dataTransfer?.types.some(t => t === 'Files' || t === 'text/uri-list');
     const enter = (e: DragEvent) => { if (isFiles(e)) { dragDepth.current++; setDragging(true); } };
     const leave = (e: DragEvent) => { if (isFiles(e) && --dragDepth.current <= 0) { dragDepth.current = 0; setDragging(false); } };
     const over = (e: DragEvent) => { if (isFiles(e)) e.preventDefault(); };
@@ -72,6 +89,8 @@ export function App() {
       if (!isFiles(e) || e.defaultPrevented) return;
       e.preventDefault();
       const paths = [...(e.dataTransfer?.files || [])].map(f => api.pathForFile(f)).filter(Boolean);
+      // из браузера: у файла нет пути на диске или это просто ссылка
+      if (!paths.length && e.dataTransfer && get().project && get().screen === 'editor') { dropFromBrowser(e.dataTransfer); return; }
       const project = paths.find(p => p.toLowerCase().endsWith('.kadr'));
       if (project) { openProjectFile(project); return; }
       if (!paths.length) return;
@@ -99,7 +118,9 @@ export function App() {
       {dialog === 'settings' && <SettingsDialog />}
       {dialog === 'palette' && <CommandPalette />}
       {dialog === 'shortcuts' && <ShortcutsDialog />}
+      {dialog === 'cover' && <CoverDialog />}
       <ConfirmDialog />
+      <Tour />
       <Toasts />
       <MenuHost />
       {dragging && (

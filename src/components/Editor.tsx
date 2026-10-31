@@ -1,6 +1,7 @@
 // Рабочее окно редактора: в центре просмотр и таймлайн, по краям панели — файлы, настройки клипа и ИИ.
 // Панели — свободные окна: любую можно оторвать за заголовок, поставить где удобно или пристыковать к краю.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { startTour } from './Tour';
 import { GripVertical, Pin, SlidersHorizontal, Sparkles, X } from 'lucide-react';
 import { layoutOf, saveLayout } from '../state/settings-actions';
 import type { FloatRect, Layout, PaneId } from '../../shared/settings';
@@ -58,6 +59,13 @@ export function Editor() {
   const [tab, setTab] = useState<RailTab>('media');
   const [panelOpen, setPanelOpen] = useState(true);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
+  // первый запуск: короткое обучение (настройки к этому моменту уже прочитаны с диска)
+  const needTour = useStore(s => !!s.info && !s.settings.tourDone);
+  useEffect(() => {
+    if (!needTour) return;
+    const t = setTimeout(startTour, 900);
+    return () => clearTimeout(t);
+  }, [needTour]);
   useEffect(() => {
     const h = () => setSize({ w: window.innerWidth, h: window.innerHeight });
     window.addEventListener('resize', h);

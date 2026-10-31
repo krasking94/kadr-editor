@@ -46,7 +46,7 @@ export interface ConfirmRequest {
 }
 
 export interface QueueItem { id: string; name: string; outPath: string; state: 'wait' | 'run' | 'done' | 'error' | 'canceled'; error?: string }
-export type Dialog = 'export' | 'settings' | 'palette' | 'shortcuts' | 'about' | null;
+export type Dialog = 'export' | 'settings' | 'palette' | 'shortcuts' | 'about' | 'cover' | null;
 
 interface State {
   screen: 'welcome' | 'editor';

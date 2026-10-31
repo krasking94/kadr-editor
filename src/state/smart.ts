@@ -485,7 +485,7 @@ export async function listenClip(clipId: string, processed: boolean): Promise<vo
   for (const t of p.tracks) for (const k of t.clips) if (k.type === 'media' && k.id !== clipId) k.muted = true;
   for (const t of p.tracks) t.muted = false;
   c.muted = false;
-  if (!processed) { c.voice = false; c.denoise = 0; }
+  if (!processed) { c.voice = false; c.denoise = 0; c.eq = undefined; }
   p.media = p.media.filter(m => !m.missing);
   const start = Math.max(c.start, Math.min(s.playhead, clipEnd(c) - 1));
   const end = Math.min(clipEnd(c), start + 8);
@@ -502,3 +502,4 @@ export async function listenClip(clipId: string, processed: boolean): Promise<vo
     endTask(task);
   }
 }
+export * from './studio';

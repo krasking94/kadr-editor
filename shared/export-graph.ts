@@ -2,6 +2,7 @@
 import type { ExportOptions, MediaClip, MediaItem, Project, TextClip, TextRender } from './types';
 import { COLOR_PRESETS, clipDuration, layoutProject, projectDuration, transitionDuration } from './timeline';
 import { isStatic, keyExpr, keysOf, range } from './keyframes';
+import { blendOf, croppedMedia, cropFilter, effectiveCrop, eqFilters, faceBlurRadius, maskFilter, wheelsFilter } from './look';
 
 export interface ExportPlan {
   args: string[];
@@ -75,15 +76,22 @@ export function pathExpr(points: { t: number; v: number }[], T: string): string 
  * Если у клипа включён хромакей, прозрачность считается по исходным цветам (как в окне просмотра),
  * а цветокоррекция применяется отдельно, и потом они соединяются через alphamerge.
  */
-function layerChain(c: MediaClip, m: MediaItem, W: number, H: number, fps: number, tOrigin: number) {
+function layerChain(c: MediaClip, m: MediaItem, W: number, H: number, fps: number, tOrigin: number, faceInput?: number) {
   const dur = clipDuration(c);
   const pre: string[] = ['setpts=PTS-STARTPTS'];
+  const crop = cropFilter(effectiveCrop(c, m));
+  if (crop) pre.push(crop);
   if (c.speed !== 1) pre.push(`setpts=PTS/${n(c.speed)}`);
+  // плавное замедление: недостающие кадры дорисовываются по движению (долго, но без рывков)
+  if (c.smooth && c.speed < 1 && m.kind === 'video') pre.push(`minterpolate=fps=${fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1`);
   pre.push(`fps=${fps}`);
   if (c.color.lut) pre.push(`lut3d=file=${ffPath(c.color.lut)}:interp=tetrahedral`);
+  const wheels = wheelsFilter(c.color.wheels);
+  if (wheels) pre.push(wheels);
   const color = colorFilters(c);
   const f: string[] = [];
-  const base = baseLayerSize(m, c.fit, W, H);
+  const base = baseLayerSize(croppedMedia(m, c), c.fit, W, H);
+  const mask = maskFilter(c.mask);
   // положение, размер, поворот и прозрачность — по ключевым кадрам (или от начала к концу клипа)
   const keys = keysOf(c);
   const k0 = keys[0];
@@ -93,18 +101,23 @@ function layerChain(c: MediaClip, m: MediaItem, W: number, H: number, fps: numbe
   const centered = isStatic(keys, 'x') && isStatic(keys, 'y') && k0.x === 0.5 && k0.y === 0.5;
   const rotates = keys.some(k => k.rotation);
   // Для «заполнить» обрезаем лишнее за пределами кадра только когда масштаб не анимируется и слой стоит по центру
-  const fillCrop = c.fit === 'fill' && scaleStatic && !path;
+  // у фигурной маски форма считается по всему слою, поэтому лишнее за кадром не срезаем
+  const fillCrop = c.fit === 'fill' && scaleStatic && !path && !mask;
   if (scaleStatic) {
     f.push(`scale=${even(base.w * k0.scale)}:${even(base.h * k0.scale)}`);
     if (fillCrop && centered && !rotates) {
       f.push(`crop=${even(Math.min(base.w * k0.scale, W * Math.max(1, k0.scale)))}:${even(Math.min(base.h * k0.scale, H * Math.max(1, k0.scale)))}`);
     }
+    f.push('format=yuva420p');
+    if (mask) f.push(mask);
   } else {
+    // форму вырезаем до изменения размера: у кадра ещё постоянный размер
+    if (mask) f.push(`scale=${even(base.w)}:${even(base.h)}`, 'format=yuva420p', mask);
     // масштаб меняется во времени: t внутри scale — локальное время слоя
     const s = keyExpr(keys, 'scale', 't');
     f.push(`scale=w='2*trunc(${n(base.w)}*${s}/2)':h='2*trunc(${n(base.h)}*${s}/2)':eval=frame`);
+    f.push('format=yuva420p');
   }
-  f.push('format=yuva420p');
   if (!scaleStatic) {
     // Размер кадра меняется каждый кадр, а поворот, затухание и прозрачность в новых FFmpeg
     // так не умеют. Кладём слой на прозрачный холст постоянного размера по центру.
@@ -131,6 +144,18 @@ function layerChain(c: MediaClip, m: MediaItem, W: number, H: number, fps: numbe
   // Собирает граф слоя: из входа src в выход out; suffix — фильтры после основной цепочки
   const emit = (graph: string[], src: string, out: string, uniq: string, suffix: string[] = []) => {
     const tail = [...f, ...suffix].join(',');
+    if (faceInput !== undefined && c.faces && m.kind === 'video') {
+      // размытие лиц: размытая копия кадра проступает только там, где на маске белые пятна лиц
+      const mw = even(m.width || W), mh = even(m.height || H);
+      const r = faceBlurRadius(c.faces, { width: mw, height: mh });
+      const u = `${uniq}f`;
+      graph.push(`[${src}]setpts=PTS-STARTPTS,scale=${mw}:${mh},format=yuv420p,split[${u}1][${u}2]`);
+      graph.push(`[${u}2]boxblur=luma_radius=${r}:luma_power=2:chroma_radius=${Math.max(1, Math.floor(r / 2))}:chroma_power=2[${u}b]`);
+      graph.push(`[${faceInput}:v]format=gray,scale=${mw}:${mh},setpts=PTS-STARTPTS[${u}m]`);
+      graph.push(`[${u}b][${u}m]alphamerge[${u}a]`);
+      graph.push(`[${u}1][${u}a]overlay=eof_action=repeat[${u}s]`);
+      src = `${u}s`;
+    }
     if (!c.key) {
       graph.push(`[${src}]${[...pre, ...color, tail].join(',')}[${out}]`);
       return;
@@ -146,7 +171,7 @@ function layerChain(c: MediaClip, m: MediaItem, W: number, H: number, fps: numbe
 }
 
 // Обработка голоса: шумоподавление и «голос как в студии» (срез гула, разборчивость, ровная громкость)
-export function voiceFilters(c: MediaClip): string[] {
+export function voiceFilters(c: Pick<MediaClip, 'denoise' | 'voice' | 'eq'>): string[] {
   const f: string[] = [];
   const d = Math.max(0, Math.min(1, c.denoise || 0));
   if (d > 0) f.push(`afftdn=nr=${Math.round(6 + d * 24)}:nf=-${Math.round(50 - d * 12)}:tn=1`);
@@ -154,6 +179,7 @@ export function voiceFilters(c: MediaClip): string[] {
     f.push('highpass=f=80', 'equalizer=f=250:t=q:w=1:g=-2', 'equalizer=f=3500:t=q:w=1.2:g=3', 'equalizer=f=9000:t=q:w=1:g=1.5');
     f.push('acompressor=threshold=-20dB:ratio=3:attack=8:release=160:makeup=2');
   }
+  f.push(...eqFilters(c.eq));
   return f;
 }
 
@@ -242,6 +268,19 @@ export function buildExportArgs(
     if (!inputIndex.has(c.id)) inputIndex.set(c.id, mediaInput(c, mediaMap.get(c.mediaId)!));
     return inputIndex.get(c.id)!;
   };
+  // Маска лиц: лента чёрно-белых картинок по времени исходника (белое — где размыть)
+  const faceInput = (c: MediaClip): number | undefined => {
+    const renders = textMap.get('faces:' + c.id);
+    if (!c.faces || !renders?.length || !extras.tempDir) return undefined;
+    const q = (f: string) => `file '${f.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`;
+    const lines = ['ffconcat version 1.0'];
+    const sorted = [...renders].sort((a, b) => (a.from ?? 0) - (b.from ?? 0));
+    for (const r of sorted) lines.push(q(r.path), `duration ${n(Math.max(0.01, (r.to ?? 0) - (r.from ?? 0)))}`);
+    lines.push(q(sorted[sorted.length - 1].path));
+    const list = `${extras.tempDir.replace(/[\\/]+$/, '')}/${c.id}_faces.ffconcat`;
+    files.push({ path: list, content: lines.join('\n') + '\n' });
+    return addInput(['-f', 'concat', '-safe', '0', '-i', list]);
+  };
 
   let vAcc = '';
   if (!audioOnly) {
@@ -251,7 +290,7 @@ export function buildExportArgs(
         const m = mediaMap.get(c.mediaId)!;
         if (m.kind === 'audio') return;
         const idx = ensureInput(c);
-        const { emit, x, y, dur } = layerChain(c, m, W, H, fps, 0);
+        const { emit, x, y, dur } = layerChain(c, m, W, H, fps, 0, faceInput(c));
         const lay = L('l'), bgl = L('b'), out = L('m');
         emit(graph, `${idx}:v`, lay, L('q'));
         graph.push(`color=c=${bg}:s=${W}x${H}:r=${fps}:d=${n(dur)},format=yuva420p[${bgl}]`);
@@ -334,11 +373,48 @@ export function buildExportArgs(
         if (c.type === 'media') {
           const m = mediaMap.get(c.mediaId);
           if (!m || m.kind === 'audio') continue;
+          const dur = clipDuration(c);
+          const on = `enable='between(t,${n(c.start)},${n(c.start + dur)})'`;
+          if (c.adjust) {
+            // Корректирующий слой: своей картинки нет, цвет и эффекты применяются ко всему, что под ним
+            const a1 = L('j'), a2 = L('j'), a3 = L('j'), nx = L('s');
+            const op = keysOf(c)[0].opacity;
+            const fl = [
+              ...(c.color.lut ? [`lut3d=file=${ffPath(c.color.lut)}:interp=tetrahedral`] : []),
+              ...(wheelsFilter(c.color.wheels) ? [wheelsFilter(c.color.wheels)] : []),
+              ...colorFilters(c), 'format=yuva420p',
+            ];
+            if (op < 1) fl.push(`colorchannelmixer=aa=${n(Math.max(0, op), 3)}`);
+            if (c.fadeIn > 0) fl.push(`fade=t=in:st=${n(c.start)}:d=${n(Math.min(c.fadeIn, dur))}:alpha=1`);
+            if (c.fadeOut > 0) fl.push(`fade=t=out:st=${n(c.start + Math.max(0, dur - c.fadeOut))}:d=${n(Math.min(c.fadeOut, dur))}:alpha=1`);
+            graph.push(`[${vAcc}]split[${a1}][${a2}]`);
+            graph.push(`[${a2}]${fl.join(',')}[${a3}]`);
+            graph.push(`[${a1}][${a3}]overlay=x=0:y=0:${on}[${nx}]`);
+            vAcc = nx;
+            continue;
+          }
           const idx = ensureInput(c);
-          const { emit, x, y, dur } = layerChain(c, m, W, H, fps, c.start);
+          const { emit, x, y } = layerChain(c, m, W, H, fps, c.start, faceInput(c));
           const lay = L('l'), nx = L('s');
           emit(graph, `${idx}:v`, lay, L('q'), [`setpts=PTS+${n(c.start)}/TB`]);
-          graph.push(`[${vAcc}][${lay}]overlay=x=${x}:y=${y}:eval=frame:eof_action=pass:enable='between(t,${n(c.start)},${n(c.start + dur)})'[${nx}]`);
+          const bm = blendOf(c.blend);
+          if (bm.ff) {
+            // Режим наложения: слой кладём на прозрачный холст размером с кадр, смешиваем с картинкой под ним
+            // и оставляем результат только там, где слой непрозрачен
+            const cv = L('j'), full = L('j'), fa = L('j'), fb = L('j'), ma = L('j'), v1 = L('j'), v2 = L('j'), g1 = L('j'), g2 = L('j'), bl = L('j'), ba = L('j');
+            graph.push(`color=c=black@0:s=${W}x${H}:r=${fps}:d=${n(total)},format=yuva420p[${cv}]`);
+            graph.push(`[${cv}][${lay}]overlay=x=${x}:y=${y}:eval=frame:eof_action=pass:format=auto:${on}[${full}]`);
+            graph.push(`[${full}]split[${fa}][${fb}]`);
+            graph.push(`[${fa}]alphaextract[${ma}]`);
+            graph.push(`[${vAcc}]split[${v1}][${v2}]`);
+            graph.push(`[${v2}]format=gbrp[${g1}]`);
+            graph.push(`[${fb}]format=gbrp[${g2}]`);
+            graph.push(`${bm.swap ? `[${g1}][${g2}]` : `[${g2}][${g1}]`}blend=all_mode=${bm.ff},format=yuv420p[${bl}]`);
+            graph.push(`[${bl}][${ma}]alphamerge[${ba}]`);
+            graph.push(`[${v1}][${ba}]overlay=x=0:y=0[${nx}]`);
+          } else {
+            graph.push(`[${vAcc}][${lay}]overlay=x=${x}:y=${y}:eval=frame:eof_action=pass:${on}[${nx}]`);
+          }
           vAcc = nx;
         } else if (c.type === 'text' && !inSeq.has(c.id)) {
           const renders = textMap.get(c.id);
@@ -355,16 +431,17 @@ export function buildExportArgs(
 
   // ── Звук ──────────────────────────────────────────────
   for (const track of p.tracks) {
-    if (track.muted) continue;
+    if (track.muted || (track.volume ?? 1) <= 0) continue;
     const clips = track.clips;
     clips.forEach((c, i) => {
-      if (c.type !== 'media' || c.muted || c.volume <= 0) return;
+      if (c.type !== 'media' || c.muted || c.volume <= 0 || c.adjust) return;
       const m = mediaMap.get(c.mediaId);
       if (!m || !m.hasAudio || m.kind === 'image') return;
       const idx = ensureInput(c);
       const dur = clipDuration(c);
       const f: string[] = ['asetpts=PTS-STARTPTS', 'aresample=48000', 'aformat=channel_layouts=stereo', ...atempoChain(c.speed), ...voiceFilters(c)];
-      if (c.volume !== 1) f.push(`volume=${n(c.volume, 3)}`);
+      const vol = c.volume * (track.volume ?? 1);
+      if (vol !== 1) f.push(`volume=${n(vol, 3)}`);
       let fi = c.audioFadeIn, fo = c.audioFadeOut;
       if (track.kind === 'main') {
         fi = Math.max(fi, transitionDuration(clips[i - 1], c));

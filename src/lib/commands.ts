@@ -9,6 +9,8 @@ import { askAssistant } from '../state/assistant';
 import { floatPane, layoutOf, saveLayout, saveSettings } from '../state/settings-actions';
 import * as SC from '../state/script';
 import * as MT from '../state/media-tools';
+import { smartPaste } from '../state/paste';
+import { startTour } from '../components/Tour';
 import { defaultLayout } from '../../shared/settings';
 import { mirror } from '../../shared/layout';
 
@@ -52,6 +54,7 @@ export const COMMANDS: Command[] = [
   { id: 'import', label: 'Добавить файлы…', group: 'Файл', keys: ['Ctrl+I'], needsProject: true, run: async () => A.importFiles(await api.openMediaDialog()) },
   { id: 'export', label: 'Сохранить видео…', group: 'Файл', keys: ['Ctrl+E'], needsProject: true, run: () => set({ dialog: 'export' }) },
   { id: 'snapshot', label: 'Сохранить текущий кадр как картинку', group: 'Файл', needsProject: true, run: () => window.dispatchEvent(new Event('kadr:snapshot')) },
+  { id: 'cover', label: 'Обложка для ролика…', group: 'Файл', needsProject: true, run: () => set({ dialog: 'cover' }), hint: 'Кадр и крупный текст — картинка для YouTube или Reels' },
   { id: 'close', label: 'Закрыть проект', group: 'Файл', needsProject: true, run: () => A.closeProject() },
 
   // Правка
@@ -60,7 +63,7 @@ export const COMMANDS: Command[] = [
   { id: 'history', label: 'История шагов', group: 'Правка', keys: ['Ctrl+H'], needsProject: true, run: () => set(s => ({ historyOpen: !s.historyOpen })) },
   { id: 'copy', label: 'Копировать', group: 'Правка', keys: ['Ctrl+C'], needsProject: true, run: needSel(A.copyClips) },
   { id: 'cut', label: 'Вырезать', group: 'Правка', keys: ['Ctrl+X'], needsProject: true, run: needSel(ids => { A.copyClips(ids); A.deleteClips(ids); }) },
-  { id: 'paste', label: 'Вставить на линию времени', group: 'Правка', keys: ['Ctrl+V'], needsProject: true, run: A.pasteClips },
+  { id: 'paste', label: 'Вставить на линию времени', group: 'Правка', keys: ['Ctrl+V'], needsProject: true, run: () => smartPaste() },
   { id: 'duplicate', label: 'Дублировать', group: 'Правка', keys: ['Ctrl+D'], needsProject: true, run: needSel(A.duplicateClips) },
   { id: 'delete', label: 'Удалить', group: 'Правка', keys: ['Delete', 'Backspace'], needsProject: true, run: needSel(ids => A.deleteClips(ids)) },
   { id: 'ripple', label: 'Удалить и сдвинуть остальное', group: 'Правка', keys: ['Shift+Delete'], needsProject: true, run: needSel(A.rippleDelete) },
@@ -137,6 +140,13 @@ export const COMMANDS: Command[] = [
   { id: 'shorts', label: 'Нарезать на короткие ролики (Shorts)', group: 'ИИ', needsProject: true, run: () => { SC.findShorts().then(r => r.length && toast('success', `Нашёл моментов: ${r.length}`, { detail: 'Откройте вкладку «Shorts» слева, чтобы посмотреть и сохранить.' })); } },
   { id: 'beats-cut', label: 'Подрезать клипы под ритм музыки', group: 'ИИ', needsProject: true, run: () => { MT.cutToBeats(2); } },
   { id: 'beats-markers', label: 'Метки на долях музыки', group: 'ИИ', needsProject: true, run: () => { MT.beatMarkers(4); } },
+  { id: 'adjust', label: 'Корректирующий слой', group: 'Клип', needsProject: true, run: () => { S.addAdjustLayer().catch(() => undefined); }, hint: 'Цвет и эффекты сразу для всего, что под ним' },
+  { id: 'auto-color', label: 'Автоцвет для выбранного клипа', group: 'Клип', needsProject: true, run: needSel(ids => { S.autoColor(ids[0]).catch(() => undefined); }) },
+  { id: 'blur-faces', label: 'Размыть лица в выбранном видео', group: 'ИИ', needsProject: true, run: needSel(ids => { S.blurFaces(ids[0]).catch(() => undefined); }) },
+  { id: 'fit-music', label: 'Подогнать музыку под длину ролика', group: 'ИИ', needsProject: true, run: () => { const c = MT.musicClip(); if (!c) { toast('info', 'Добавьте музыку на звуковую дорожку'); return; } S.fitMusic(c.id).catch(() => undefined); } },
+  { id: 'brand-logo', label: 'Логотип бренда в угол на весь ролик', group: 'Клип', needsProject: true, run: () => { S.addBrandLogo().catch(() => undefined); } },
+  { id: 'brand-texts', label: 'Шрифт и цвета бренда ко всем надписям', group: 'Клип', needsProject: true, run: () => { S.applyBrandToTexts(); } },
+  { id: 'tour', label: 'Показать обучение', group: 'Помощь', run: () => startTour() },
   { id: 'proxies', label: 'Лёгкие копии для всех видео', group: 'Клип', needsProject: true, run: () => MT.requestProxies(get().project!.media.filter(m => m.kind === 'video' && !m.proxy).map(m => m.id)) },
   { id: 'srt-open', label: 'Открыть субтитры (SRT)', group: 'Файл', needsProject: true, run: () => { S.importSubtitles(); } },
   { id: 'srt-save', label: 'Сохранить субтитры (SRT)', group: 'Файл', needsProject: true, run: () => { S.exportSubtitles(); } },
@@ -203,6 +213,8 @@ export function handleKey(e: KeyboardEvent): boolean {
   if (!cmd) return false;
   if (cmd.needsProject && (!s.project || s.screen !== 'editor')) return false;
   if (cmd.id === 'deselect' && !s.selection.length && s.tool === 'select') return false;
+  // Ctrl+V не перехватываем: событие «вставить» несёт файлы и картинки из буфера (см. smartPaste)
+  if (cmd.id === 'paste') return false;
   e.preventDefault();
   cmd.run();
   return true;

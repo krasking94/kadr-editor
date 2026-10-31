@@ -9,6 +9,7 @@ import {
 import { renderTextPngs } from '../lib/text-render';
 import { autoProxies, checkProxies } from './media-tools';
 import { loadFonts } from '../lib/fonts';
+import { faceMaskRenders } from './studio';
 import { askConfirm, commit, endTask, get, patchMediaCache, set, startTask, toast, updateTask, type QueueItem } from './store';
 
 const deepMerge = <T extends object>(base: T, patch: Partial<T> | undefined): T => ({ ...base, ...(patch || {}) });
@@ -476,6 +477,8 @@ export function copyClips(ids: string[]) {
   const clips = ids.map(id => findClip(p, id)).filter(Boolean).map(f => ({ clip: structuredClone(f!.clip), kind: f!.track.kind }));
   if (!clips.length) return;
   set({ clipboard: clips });
+  // метка в системном буфере: теперь Ctrl+V вставит клипы, а не старый скриншот
+  navigator.clipboard?.writeText('hlopushka:clips').catch(() => undefined);
   toast('info', clips.length > 1 ? `Скопировано клипов: ${clips.length}` : 'Клип скопирован');
 }
 
@@ -663,6 +666,7 @@ async function textRenders(p: Project, scale = 1) {
     if (t.hidden || t.kind !== 'text') continue;
     for (const c of t.clips) if (c.type === 'text') for (const r of renderTextPngs(c, W, H)) out.push({ clipId: c.id, ...r });
   }
+  out.push(...faceMaskRenders(p));
   return out;
 }
 

@@ -35,3 +35,11 @@ export const ELEVEN_TTS_MODELS = [
 export interface Voice { id: string; name: string; info: string; preview?: string }
 
 export interface GenResult { path: string; name: string }
+
+// ИИ-видео через fal.ai: пары моделей «по описанию» и «оживить фото». Имена моделей можно поменять в настройках.
+export const VIDEO_MODELS = [
+  { label: 'Kling 2.5 Turbo — лучшее соотношение цены и качества', t2v: 'fal-ai/kling-video/v2.5-turbo/pro/text-to-video', i2v: 'fal-ai/kling-video/v2.5-turbo/pro/image-to-video' },
+  { label: 'Google Veo 3 Fast — со звуком, дороже', t2v: 'fal-ai/veo3/fast', i2v: 'fal-ai/veo3/fast/image-to-video' },
+  { label: 'Wan 2.2 — открытая модель, дешевле', t2v: 'fal-ai/wan/v2.2-a14b/text-to-video', i2v: 'fal-ai/wan/v2.2-a14b/image-to-video' },
+  { label: 'Hailuo 02 (MiniMax) — живые движения', t2v: 'fal-ai/minimax/hailuo-02/standard/text-to-video', i2v: 'fal-ai/minimax/hailuo-02/standard/image-to-video' },
+];

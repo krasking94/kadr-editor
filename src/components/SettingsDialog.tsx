@@ -2,23 +2,28 @@
 import { defaultLayout } from '../../shared/settings';
 import { mirror } from '../../shared/layout';
 import { useEffect, useState } from 'react';
+import { Clapperboard, Stamp } from 'lucide-react';
 import { AudioLines, Bot, CheckCircle2, Copy, Cpu, ExternalLink, ImagePlus, Info, Keyboard, KeyRound, Loader2, Palette, Play, Plug, Plus, RefreshCw, Server, Settings as Gear, Trash2 } from 'lucide-react';
-import { ELEVEN_TTS_MODELS, IMAGE_PROVIDERS, imageProvider, type Voice } from '../../shared/generators';
-import { api } from '../api';
+import { ELEVEN_TTS_MODELS, IMAGE_PROVIDERS, imageProvider, VIDEO_MODELS, type Voice } from '../../shared/generators';
+import { api, mediaUrl } from '../api';
+import { defaultBrand, type Brand } from '../../shared/settings';
+import { FONTS } from '../lib/fonts';
+import { startTour } from './Tour';
 import { PROVIDERS, providerPreset, SPEECH_PROVIDERS } from '../../shared/providers';
 import type { McpClientConfig } from '../../shared/settings';
 import { uid } from '../../shared/timeline';
 import { set, toast, useStore } from '../state/store';
 import { layoutOf, saveLayout, saveSecret, saveSettings } from '../state/settings-actions';
 import { installUpdateNow } from '../state/actions';
-import { Modal, Segmented, Slider, Switch } from './ui';
+import { ColorInput, Modal, Segmented, Slider, Switch } from './ui';
 import { ShortcutsList } from './ShortcutsDialog';
 import { Logo } from './Logo';
 
 const NAV = [
   { id: 'general', label: 'Общие', icon: Palette },
   { id: 'ai', label: 'Нейросети', icon: Bot },
-  { id: 'gen', label: 'Картинки и звук', icon: ImagePlus },
+  { id: 'gen', label: 'Картинки, звук, видео', icon: ImagePlus },
+  { id: 'brand', label: 'Бренд-кит', icon: Stamp },
   { id: 'mcp', label: 'Внешний ИИ (MCP)', icon: Plug },
   { id: 'export', label: 'Сохранение видео', icon: Cpu },
   { id: 'keys', label: 'Горячие клавиши', icon: Keyboard },
@@ -37,6 +42,7 @@ export function SettingsDialog() {
           {tab === 'general' && <General />}
           {tab === 'ai' && <AiSettings />}
           {tab === 'gen' && <GenSettings />}
+          {tab === 'brand' && <BrandSettings />}
           {tab === 'mcp' && <McpSettings />}
           {tab === 'export' && <ExportSettings />}
           {tab === 'keys' && <ShortcutsList />}
@@ -74,6 +80,7 @@ function General() {
         hint="Копия проекта на случай сбоя. Её можно восстановить на стартовом экране." />
       <Switch label="Прилипание клипов на таймлайне" checked={s.snapping} onChange={v => saveSettings({ snapping: v })} />
       <Switch label="Показывать подсказки для новичков" checked={s.showTips} onChange={v => saveSettings({ showTips: v })} />
+      <div className="row"><button className="btn small" onClick={() => { set({ dialog: null }); startTour(); }}>Показать обучение ещё раз</button></div>
       <div className="field"><label>Расположение панелей</label>
         <Segmented value={layoutOf(s).swap ? 'swap' : 'normal'} onChange={v => { if ((v === 'swap') !== layoutOf(s).swap) saveLayout(mirror(layoutOf(s))); }} options={[
           { value: 'normal', label: 'Файлы слева', tip: 'Медиатека слева, настройки клипа и ИИ справа' },
@@ -268,6 +275,67 @@ function GenSettings() {
             </select>
           </div>
         </div>
+      </div>
+      <div className="card">
+        <div className="row"><Clapperboard size={16} /><b>ИИ-видео — fal.ai</b></div>
+        <div className="small-text muted">Ролики по описанию и «оживление» фото. Через один ключ fal.ai доступны Kling, Google Veo, Wan, Hailuo и другие модели. Оплата — с вашего счёта fal.ai, обычно 20–150 ₽ за ролик в 5–10 секунд. Ключ тот же, что у картинок FLUX.</div>
+        <KeyField id="fal" url="https://fal.ai/dashboard/keys" />
+        <div className="field"><label>Модель для ролика по описанию</label>
+          <select className="input" value={VIDEO_MODELS.some(m => m.t2v === g.videoModel) ? g.videoModel : ''} onChange={e => { const m = VIDEO_MODELS.find(x => x.t2v === e.target.value); if (m) save({ videoModel: m.t2v, videoImageModel: m.i2v }); }}>
+            {VIDEO_MODELS.map(m => <option key={m.t2v} value={m.t2v}>{m.label}</option>)}
+            {!VIDEO_MODELS.some(m => m.t2v === g.videoModel) && <option value="">Своя модель</option>}
+          </select>
+        </div>
+        <div className="row">
+          <div className="field grow"><label>Имя модели: по описанию</label><input className="input mono" value={g.videoModel} onChange={e => save({ videoModel: e.target.value.trim() })} /></div>
+          <div className="field grow"><label>Имя модели: оживить фото</label><input className="input mono" value={g.videoImageModel} onChange={e => save({ videoImageModel: e.target.value.trim() })} /></div>
+        </div>
+        <div className="small-text muted">Любую другую модель можно найти на <a style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => api.openExternal('https://fal.ai/models?categories=text-to-video')}>fal.ai/models</a> и вставить её имя сюда.</div>
+      </div>
+    </>
+  );
+}
+
+function BrandSettings() {
+  const raw = useStore(st => st.settings.brand);
+  const b = { ...defaultBrand(), ...raw };
+  const save = (patch: Partial<Brand>) => saveSettings({ brand: { ...b, ...patch } });
+  const corner = { tl: { left: 8, top: 8 }, tr: { right: 8, top: 8 }, bl: { left: 8, bottom: 8 }, br: { right: 8, bottom: 8 } }[b.logoCorner];
+  return (
+    <>
+      <div className="small-text muted">Бренд-кит — это ваши цвета, шрифт и логотип. Шаблоны титров сразу берут их, а логотип одной кнопкой встаёт в угол всего ролика (вкладка «Текст» слева).</div>
+      <div className="brand-preview" style={{ fontFamily: b.font }}>
+        {b.logo && <img src={mediaUrl(b.logo)} style={{ position: 'absolute', height: `${b.logoSize * 100}%`, opacity: b.logoOpacity, ...corner }} />}
+        <div style={{ position: 'absolute', left: 18, bottom: 26 }}>
+          <div style={{ display: 'inline-block', background: b.primary, color: b.text, fontWeight: 700, padding: '4px 10px', fontSize: 18 }}>Иван Петров</div><br />
+          <div style={{ display: 'inline-block', background: '#111318', color: '#fff', padding: '3px 10px', fontSize: 13 }}>{b.name || '@мой_канал'}</div>
+        </div>
+        <div style={{ position: 'absolute', right: 18, bottom: 26, background: b.accent, color: '#111318', fontWeight: 700, padding: '4px 10px', fontSize: 15 }}>−30%</div>
+      </div>
+      <div className="field"><label>Название канала или компании</label><input className="input" value={b.name} placeholder="@мой_канал" onChange={e => save({ name: e.target.value })} /></div>
+      <div className="field"><label>Шрифт</label>
+        <select className="input" value={b.font} onChange={e => save({ font: e.target.value })} style={{ fontFamily: b.font }}>
+          {FONTS.map(f => <option key={f.family} value={f.family} style={{ fontFamily: f.family }}>{f.label} — {f.style}</option>)}
+        </select>
+      </div>
+      <div className="row wrap" style={{ gap: 18 }}>
+        <ColorInput label="Главный цвет" value={b.primary} onChange={v => save({ primary: v })} />
+        <ColorInput label="Второй цвет" value={b.accent} onChange={v => save({ accent: v })} />
+        <ColorInput label="Цвет текста" value={b.text} onChange={v => save({ text: v })} />
+      </div>
+      <div className="card">
+        <div className="row"><b>Логотип</b></div>
+        <div className="row wrap">
+          <button className="btn small" onClick={async () => { const f = await api.openImageDialog('Логотип'); if (f) save({ logo: f }); }}>{b.logo ? 'Выбрать другой' : 'Выбрать логотип'}</button>
+          {b.logo && <span className="small-text muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 360 }}>{b.logo}</span>}
+          {b.logo && <button className="btn small ghost" onClick={() => save({ logo: '' })}>Убрать</button>}
+        </div>
+        <div className="small-text muted">Лучше всего PNG с прозрачным фоном.</div>
+        <div className="field"><label>Угол</label>
+          <Segmented value={b.logoCorner} onChange={v => save({ logoCorner: v })} options={[{ value: 'tl', label: '↖ слева сверху' }, { value: 'tr', label: '↗ справа сверху' }, { value: 'bl', label: '↙ слева снизу' }, { value: 'br', label: '↘ справа снизу' }]} />
+        </div>
+        <Slider label="Размер" value={b.logoSize} min={0.04} max={0.3} step={0.01} def={0.12} format={v => Math.round(v * 100) + '% высоты'} onChange={v => save({ logoSize: v })} />
+        <Slider label="Непрозрачность" value={b.logoOpacity} min={0.2} max={1} step={0.05} def={0.9} format={v => Math.round(v * 100) + '%'} onChange={v => save({ logoOpacity: v })} />
       </div>
     </>
   );

@@ -4,6 +4,7 @@ import { Camera, ChevronFirst, ChevronLast, Expand, Grid3x3, Pause, Play, SkipBa
 import { api, mediaUrl } from '../api';
 import type { MediaClip, MediaItem, Project, TextClip, Track } from '../../shared/types';
 import { baseLayerSize } from '../../shared/export-graph';
+import { blendOf, croppedMedia, effectiveCrop, faceBlurRadius, facesAt, hasCrop, hasWheels, maskCss, padBox } from '../../shared/look';
 import { clipDuration, cssFilter, formatTime, projectDuration, textAnimState, transformAt, transitionDuration, FORMAT_PRESETS } from '../../shared/timeline';
 import { activeWord, drawText } from '../lib/text-render';
 import { PixelFx } from './PixelFx';
@@ -213,7 +214,7 @@ const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaI
     let gain = c.volume;
     if (c.audioFadeIn > 0 && local < c.audioFadeIn) gain *= local / c.audioFadeIn;
     if (c.audioFadeOut > 0 && dur - local < c.audioFadeOut) gain *= Math.max(0, (dur - local) / c.audioFadeOut);
-    gain *= p.info.fx.opacity;
+    gain *= p.info.fx.opacity * (p.info.track.volume ?? 1);
     el.volume = Math.max(0, Math.min(1, gain));
     el.muted = p.muted || c.muted || p.info.track.muted || !visible;
   });
@@ -225,8 +226,9 @@ const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaI
   if (m.kind === 'audio' || p.info.track.hidden) {
     return <audio ref={elRef} src={mediaUrl(previewPath(m, useProxy))} preload="auto" />;
   }
+  if (c.adjust) return <AdjustLayer clip={c} z={p.info.z} visible={visible} local={local} k={p.k} />;
   const tr = transformAt(c, local);
-  const base = baseLayerSize(m, c.fit, p.W, p.H);
+  const base = baseLayerSize(croppedMedia(m, c), c.fit, p.W, p.H);
   const w = base.w * tr.scale, h = base.h * tr.scale;
   const fx = p.info.fx;
   let opacity = tr.opacity * fx.opacity;
@@ -239,23 +241,53 @@ const MediaLayer = memo(function MediaLayer(p: { info: LayerInfo; media?: MediaI
     opacity: visible ? opacity : 0, filter: cssFilter(c, p.k) || undefined,
     clipPath: fx.clip, WebkitMaskImage: fx.mask, maskImage: fx.mask,
     visibility: visible ? 'visible' : 'hidden', cursor: visible ? 'move' : undefined,
+    mixBlendMode: p.info.track.kind === 'video' && c.blend && c.blend !== 'normal' ? (blendOf(c.blend).css as CSSProperties['mixBlendMode']) : undefined,
   };
-  const inner: CSSProperties = flip ? { transform: flip.trim(), width: '100%', height: '100%' } : { width: '100%', height: '100%' };
-  // Хромакей и LUT браузер сам не умеет: такие клипы рисуются через холст (см. PixelFx)
-  const pixel = !!(c.key || c.color.lut);
+  const inner: CSSProperties = { width: '100%', height: '100%', position: 'relative', overflow: 'hidden', ...(flip ? { transform: flip.trim() } : {}), clipPath: maskCss(c.mask, w, h) };
+  // Обрезка: сам файл больше слоя и сдвинут так, чтобы в окошке была только нужная часть
+  const cr = effectiveCrop(c, m);
+  const cropped = hasCrop(cr);
+  const fullW = w / (1 - cr.l - cr.r), fullH = h / (1 - cr.t - cr.b);
+  const box: CSSProperties = cropped ? { position: 'absolute', left: -cr.l * fullW, top: -cr.t * fullH, width: fullW, height: fullH } : { position: 'absolute', inset: 0 };
+  // Хромакей, LUT и цветовые круги браузер сам не умеет: такие клипы рисуются через холст (см. PixelFx)
+  const pixel = !!(c.key || c.color.lut || hasWheels(c.color.wheels));
+  const faces = c.faces && m.kind === 'video' && visible ? facesAt(c.faces, desired) : [];
+  const faceBlur = c.faces ? (faceBlurRadius(c.faces, m) * fullW) / Math.max(1, m.width || fullW) : 0;
   return (
     <div className={'layer' + (p.selected && visible ? ' selected' : '')} style={style} onPointerDown={e => startLayerDrag(e, c, p.W, p.H)}>
       <div style={inner}>
-        {m.kind === 'image'
-          ? <img ref={imgRef} src={mediaUrl(m.path)} crossOrigin="anonymous" draggable={false} style={pixel ? { opacity: 0 } : undefined} />
-          : <video ref={elRef} src={mediaUrl(previewPath(m, useProxy))} crossOrigin="anonymous" preload="auto" playsInline disablePictureInPicture style={pixel ? { opacity: 0 } : undefined} />}
-        {pixel && visible && <PixelFx source={m.kind === 'image' ? imgRef : elRef} keyColor={c.key} lut={c.color.lut} w={w} h={h} playing={p.playing} t={p.t} />}
+        <div style={box}>
+          {m.kind === 'image'
+            ? <img ref={imgRef} src={mediaUrl(m.path)} crossOrigin="anonymous" draggable={false} style={pixel ? { opacity: 0 } : undefined} />
+            : <video ref={elRef} src={mediaUrl(previewPath(m, useProxy))} crossOrigin="anonymous" preload="auto" playsInline disablePictureInPicture style={pixel ? { opacity: 0 } : undefined} />}
+          {pixel && visible && <PixelFx source={m.kind === 'image' ? imgRef : elRef} keyColor={c.key} lut={c.color.lut} wheels={c.color.wheels} w={fullW} h={fullH} playing={p.playing} t={p.t} />}
+          {faces.map((b, i) => {
+            const [x, y, bw, bh] = padBox(b);
+            return <div key={i} className="face-blur" style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${bw * 100}%`, height: `${bh * 100}%`, backdropFilter: `blur(${faceBlur.toFixed(1)}px)` }} />;
+          })}
+        </div>
       </div>
       {c.effects.vignette > 0 && <div className="vignette" style={{ background: `radial-gradient(ellipse at center, transparent ${60 - c.effects.vignette * 35}%, rgba(0,0,0,${0.35 + c.effects.vignette * 0.6}) 100%)` }} />}
       {c.effects.grain > 0 && <div className="grain" style={{ backgroundImage: GRAIN, opacity: c.effects.grain * 0.8 }} />}
     </div>
   );
 });
+
+// Корректирующий слой: своей картинки нет, браузер применяет цвет и размытие ко всему, что под ним
+function AdjustLayer({ clip: c, z, visible, local, k }: { clip: MediaClip; z: number; visible: boolean; local: number; k: number }) {
+  if (!visible) return null;
+  const dur = clipDuration(c);
+  let opacity = transformAt(c, local).opacity;
+  if (c.fadeIn > 0 && local < c.fadeIn) opacity *= local / c.fadeIn;
+  if (c.fadeOut > 0 && dur - local < c.fadeOut) opacity *= Math.max(0, (dur - local) / c.fadeOut);
+  const f = cssFilter(c, k);
+  return (
+    <div className="layer adjust-layer" style={{ inset: 0, width: '100%', height: '100%', zIndex: z, opacity, pointerEvents: 'none', backdropFilter: f || undefined }}>
+      {c.effects.vignette > 0 && <div className="vignette" style={{ background: `radial-gradient(ellipse at center, transparent ${60 - c.effects.vignette * 35}%, rgba(0,0,0,${0.35 + c.effects.vignette * 0.6}) 100%)` }} />}
+      {c.effects.grain > 0 && <div className="grain" style={{ backgroundImage: GRAIN, opacity: c.effects.grain * 0.8 }} />}
+    </div>
+  );
+}
 
 // Перетаскивание слоя мышью прямо в кадре
 function startLayerDrag(e: React.PointerEvent, c: MediaClip, W: number, H: number) {
