@@ -15,7 +15,7 @@ import { getSettings, setSettings, setSecret, secretStatus } from './settings';
 import { attachWindow, notify } from './bridge';
 import { chat, complete, listModels, resetSession, speechIsLocal, stopAi, transcribeFile } from './ai';
 import { writeFileAtomic } from './safe-write';
-import { cancelDownload, cancelSeparate, deleteModel, downloadModel, localModelsInfo, localSelfTest, localSeparate, localTranscribe, stopWorker } from './local-ai';
+import { cancelDownload, cancelSeparate, deleteModel, downloadModel, localModelsInfo, localDeepTest, localSelfTest, localSeparate, localTranscribe, stopWorker } from './local-ai';
 import { audioSnippet, bgCleanup, bgFinish, bgFrames, bgPrepare, bgWrite, cancelProcess, makeProxy, measureLoudness, measureLoudnessFile, processClip, type ProcessKind, type ProcessOpts } from './process';
 import { envelope, findOffset } from '../shared/multicam';
 import { parseAnalysis } from '../shared/preflight';
@@ -31,6 +31,8 @@ import { publish, publishLogout, publishStatus, telegramCheck, vkLogin, youtubeL
 // До версии 0.3 программа называлась «Кадр» (Kadr). Настройки, ключи нейросетей, список проектов
 // и автосохранения остаются в прежней папке, чтобы после обновления ничего не пропало.
 app.setPath('userData', join(app.getPath('appData'), 'Kadr'));
+// для проверки на сервере сборки: папка настроек с русскими буквами в пути, как у многих пользователей
+if (process.env.KADR_USER_DATA) app.setPath('userData', process.env.KADR_USER_DATA);
 
 const isDev = !!process.env.KADR_DEV_URL;
 let win: BrowserWindow | null = null;
@@ -122,7 +124,8 @@ function createWindow() {
 
 // Проверка собранной программы (запускается на сервере сборки): окно открылось, интерфейс нарисован, FFmpeg найден
 function smokeTest(w: BrowserWindow) {
-  const fail = setTimeout(() => { console.log('SMOKE FAIL: timeout'); app.exit(1); }, 60000);
+  const deep = process.env.KADR_SMOKE_ML === '1';
+  const fail = setTimeout(() => { console.log('SMOKE FAIL: timeout'); app.exit(1); }, deep ? 15 * 60000 : 60000);
   w.webContents.once('did-finish-load', async () => {
     await new Promise(r => setTimeout(r, 4000));
     const ui = await w.webContents.executeJavaScript(`!!document.querySelector('.welcome h1')`).catch(() => false);
@@ -130,10 +133,12 @@ function smokeTest(w: BrowserWindow) {
     const mcp = mcpServerState();
     const bridge = await bridgeSelfTest(mcp.port).catch(e => ({ ok: false, error: String(e) }));
     const ml = await localSelfTest();
-    console.log('SMOKE', JSON.stringify({ ui, ffmpeg: ff, mcp, bridge, ml }));
+    // полная проверка нейросетей: скачать, распознать, разделить (только по просьбе сервера сборки)
+    const mlDeep = deep ? await localDeepTest() : { ok: true, steps: [] as string[] };
+    console.log('SMOKE', JSON.stringify({ ui, ffmpeg: ff, mcp, bridge, ml, mlDeep, userData: app.getPath('userData') }));
     clearTimeout(fail);
     allowClose = true;
-    app.exit(ui && ff.ok && bridge.ok && ml.ok ? 0 : 1);
+    app.exit(ui && ff.ok && bridge.ok && ml.ok && mlDeep.ok ? 0 : 1);
   });
 }
 

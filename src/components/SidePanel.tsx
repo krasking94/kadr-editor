@@ -252,7 +252,7 @@ function SubtitlesCard() {
     <div className="card" style={{ gap: 10 }}>
       <div className="small-text muted">ИИ послушает речь в видео и сам расставит субтитры по времени.</div>
       <Segmented value={style} onChange={setStyle} options={[
-        { value: 'blogger', label: 'Как у блогеров', tip: 'Крупно, по 2–4 слова, произносимое слово подсвечивается' },
+        { value: 'blogger', label: 'Как у блогеров', tip: 'Крупно, по нескольку слов (сколько — выберите ниже), произносимое слово подсвечивается' },
         { value: 'classic', label: 'Классика', tip: 'Целые фразы внизу кадра на плашке' },
       ]} />
       {style === 'blogger' && <>

@@ -1,7 +1,7 @@
 {
   "name": "kadr",
   "productName": "Hlopushka",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "description": "Хлопушка — простой и красивый видеоредактор с ИИ-помощником",
   "author": {
     "name": "Максим (krasking94)"
@@ -51,7 +51,7 @@
     "appId": "io.github.krasking94.kadr",
     "productName": "Hlopushka",
     "executableName": "Hlopushka",
-    "copyright": "© 2026 Максим (krasking94). Лицензия MIT.",
+    "copyright": "© 2026 Максим (krasking94)",
     "publish": [
       {
         "provider": "github",

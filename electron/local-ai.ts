@@ -155,7 +155,11 @@ function ensureWorker(): ChildProcess {
   const { ml, koffi } = nativeDirs();
   // в собранной программе процесс лежит рядом с ресурсами, а не внутри app.asar
   const script = app.isPackaged ? join(process.resourcesPath, 'ml-worker.js') : join(__dirname, 'ml-worker.js');
+  // Папка моделей — рабочая папка процесса, а пути к моделям передаются относительные (только латиница).
+  // Иначе на Windows с русским именем пользователя (C:\\Users\\Максим\\…) библиотека нейросетей может не открыть файл.
+  mkdirSync(modelsDir(), { recursive: true });
   const w = fork(script, [], {
+    cwd: modelsDir(),
     execPath: process.execPath,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', KADR_ML_DIR: ml, KADR_KOFFI: koffi },
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
@@ -207,7 +211,7 @@ function call<T>(req: Record<string, unknown>, onProgress?: (p: number) => void,
       reject(new Error('Отменено'));
       stopWorker(); // нейросеть не умеет останавливаться на полпути — закрываем её процесс
     });
-    ensureWorker().send({ ...req, id, dir: modelsDir() });
+    ensureWorker().send({ ...req, id, dir: '.' });
   });
 }
 
@@ -248,6 +252,42 @@ export async function localSelfTest(): Promise<{ ok: boolean; version?: string; 
     return { ok: false, error: String((e as Error)?.message || e) };
   } finally {
     clearTimeout(t);
+    stopWorker();
+  }
+}
+
+/**
+ * Полная проверка на сервере сборки: скачать нейросети, распознать речь и разделить звук в собранной программе.
+ * Сервер сборки запускает её с папкой настроек, где в пути есть русские буквы и пробел, — как у многих пользователей.
+ */
+export async function localDeepTest(): Promise<{ ok: boolean; steps: string[]; error?: string }> {
+  const steps: string[] = [];
+  const t0 = Date.now();
+  const mark = (s: string) => steps.push(`${s} (${((Date.now() - t0) / 1000).toFixed(1)} с)`);
+  const wav = join(tempDir(), `проверка ${Date.now().toString(36)}.wav`);
+  try {
+    for (const id of ['asr-ru', 'sep-fast', 'sep-best'] as LocalModelId[]) {
+      if (!modelReady(id)) await downloadModel('smoke-' + id, id, () => undefined);
+      mark('скачана ' + id);
+    }
+    // три секунды звука: тон и шум — речи нет, но модели должны загрузиться и пройти весь путь
+    const r = await run(FFMPEG, ['-hide_banner', '-y', '-nostdin', '-f', 'lavfi', '-i', 'sine=frequency=330:duration=3', '-f', 'lavfi', '-i', 'anoisesrc=d=3:a=0.05',
+      '-filter_complex', 'amix=inputs=2', '-ar', '44100', '-ac', '2', wav]);
+    if (r.code !== 0) throw new Error('FFmpeg не сделал звук для проверки');
+    const segs = await localTranscribe(wav, 'ru');
+    mark(`распознавание: ${segs.length} фраз`);
+    for (const q of ['fast', 'best'] as const) {
+      const out = await localSeparate('smoke-' + q, wav, 0, 3, q, () => undefined);
+      const ok = [out.voice, out.music].every(f => existsSync(f) && statSync(f).size > 1000);
+      for (const f of [out.voice, out.music]) try { unlinkSync(f); } catch { /* нет файла */ }
+      if (!ok) throw new Error('разделение не сохранило файлы (' + q + ')');
+      mark('разделение ' + q);
+    }
+    return { ok: true, steps };
+  } catch (e) {
+    return { ok: false, steps, error: String((e as Error)?.message || e) };
+  } finally {
+    try { unlinkSync(wav); } catch { /* нет файла */ }
     stopWorker();
   }
 }

@@ -45,10 +45,24 @@ jobs:
           $env:FFMPEG = "$PWD\resources\ffmpeg\win32\ffmpeg.exe"
           npm test
 
+      # Цифровая подпись: когда появится сертификат, добавьте в Settings → Secrets and variables → Actions
+      # секреты WIN_CSC_LINK (файл .pfx в base64) и WIN_CSC_KEY_PASSWORD. Без них установщик собирается без подписи.
       - name: Собрать установщик
-        run: npm run dist:win
+        shell: pwsh
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          SIGN_LINK: ${{ secrets.WIN_CSC_LINK }}
+          SIGN_PASS: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          if ($env:SIGN_LINK) {
+            $env:WIN_CSC_LINK = $env:SIGN_LINK
+            $env:WIN_CSC_KEY_PASSWORD = $env:SIGN_PASS
+            Write-Host 'Подписываю установщик сертификатом'
+          } else {
+            Write-Host 'Сертификата нет: установщик будет без цифровой подписи'
+          }
+          npm run dist:win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Проверить, что программа запускается
         shell: pwsh
@@ -56,6 +70,17 @@ jobs:
           $p = Start-Process -FilePath "release\win-unpacked\Hlopushka.exe" -ArgumentList "--smoke-test" -PassThru -Wait -RedirectStandardOutput smoke.txt
           Get-Content smoke.txt
           if ($p.ExitCode -ne 0) { throw "Программа не запустилась (код $($p.ExitCode))" }
+
+      # Нейросети на компьютере по-настоящему: скачать, распознать речь, разделить голос и музыку.
+      # Папка настроек с русскими буквами и пробелом — как у пользователя «C:\Users\Максим».
+      - name: Проверить нейросети в собранной программе
+        shell: pwsh
+        run: |
+          $env:KADR_SMOKE_ML = '1'
+          $env:KADR_USER_DATA = Join-Path $env:RUNNER_TEMP 'Проверка Хлопушки'
+          $p = Start-Process -FilePath "release\win-unpacked\Hlopushka.exe" -ArgumentList "--smoke-test" -PassThru -Wait -RedirectStandardOutput smoke-ml.txt
+          Get-Content smoke-ml.txt -Encoding utf8
+          if ($p.ExitCode -ne 0) { throw "Нейросети не работают в собранной программе (код $($p.ExitCode))" }
 
       - uses: actions/upload-artifact@v4
         with:

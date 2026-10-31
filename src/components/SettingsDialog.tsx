@@ -600,7 +600,7 @@ function About() {
           <div className="muted">версия {info?.version} · {info?.platform === 'win32' ? 'Windows' : info?.platform}</div>
         </div>
       </div>
-      <div>Простой и красивый видеоредактор с ИИ-помощником. Бесплатный, с открытым кодом.</div>
+      <div>Простой и красивый видеоредактор с ИИ-помощником. Бесплатный, с открытым кодом. Как что сделать — в справке: <a style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => set({ dialog: 'help' })}>открыть (F1)</a>.</div>
       <div className="row wrap">
         <button className="btn" onClick={() => api.openExternal('https://github.com/krasking94/kadr-editor')}><ExternalLink size={14} /> Страница проекта</button>
         <button className="btn" onClick={() => api.openExternal('https://github.com/krasking94/kadr-editor/issues/new')}>Сообщить об ошибке</button>
@@ -608,7 +608,7 @@ function About() {
       </div>
       <UpdateCard />
       <div className="card small-text muted" style={{ lineHeight: 1.6 }}>
-        Внутри: Electron, React, FFmpeg (лицензия LGPL/GPL, поставляется отдельной программой), шрифты Onest, Montserrat, Rubik, Unbounded, Oswald, Russo One, Comfortaa, PT Serif, Caveat, Lobster, Press Start 2P, JetBrains Mono (лицензия SIL OFL), иконки Lucide.
+        Внутри: Electron, React, FFmpeg (лицензия LGPL/GPL, поставляется отдельной программой), шрифты Onest, Montserrat, Rubik, Unbounded, Oswald, Russo One, Comfortaa, PT Serif, Caveat, Lobster, Press Start 2P, JetBrains Mono (лицензия SIL OFL), иконки Lucide. Нейросети на компьютере работают через sherpa-onnx (лицензия Apache 2.0); сами модели скачиваются отдельно, их лицензии — в «Настройки → На компьютере».
       </div>
     </>
   );

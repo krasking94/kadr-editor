@@ -1,6 +1,6 @@
 // Стартовый экран: выбрать формат нового ролика, открыть недавний проект или пример.
 import { useEffect, useState } from 'react';
-import { Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, LifeBuoy, Plug, Settings, Sparkles, Undo2, Wand2, X, ScrollText, Smartphone, AppWindow, Diamond, Mic2, ScanFace, WandSparkles, Send, Video, Crosshair } from 'lucide-react';
+import { AudioLines, Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, LifeBuoy, Plug, Settings, Sparkles, Undo2, Wand2, X, ScrollText, Smartphone, AppWindow, Diamond, Mic2, ScanFace, WandSparkles, Send, Video, Crosshair } from 'lucide-react';
 import { api } from '../api';
 import { FORMAT_PRESETS } from '../../shared/timeline';
 import { set, useStore } from '../state/store';
@@ -11,9 +11,11 @@ import { Logo } from './Logo';
 type Autosave = AutosaveInfo;
 
 const FEATURES = [
+  { icon: Captions, title: 'Субтитры без интернета', text: 'Речь распознаёт нейросеть прямо на компьютере: бесплатно, видео никуда не уходит.' },
+  { icon: AudioLines, title: 'Голос отдельно от музыки', text: 'Уберите музыку из записи или сделайте минусовку — тоже без интернета.' },
   { icon: WandSparkles, title: 'Собери ролик сам', text: 'Отдайте сырые записи и скажите, что нужно, — нейросеть соберёт черновик с субтитрами и музыкой.' },
   { icon: Send, title: 'Публикация в один клик', text: 'Проверка перед выходом (громкость, обрезанные надписи) и отправка в YouTube, ВК и Telegram.' },
-  { icon: Video, title: 'Мультикамера', text: 'Несколько камер выравниваются по звуку сами, а клавиши 1–4 переключают их на ходу.' },
+  { icon: Video, title: 'Мультикамера', text: 'Несколько камер выравниваются по звуку сами, а клавиши 1–6 переключают их на ходу.' },
   { icon: Crosshair, title: 'Слежение за объектом', text: 'Надпись едет за человеком или машиной, номер и логотип размываются по всему клипу.' },
   { icon: Sparkles, title: 'ИИ-помощник', text: 'Пишете «убери паузы и сделай субтитры» — и видите, как он монтирует.' },
   { icon: Plug, title: 'Любая нейросеть', text: 'Claude, ChatGPT, Gemini, DeepSeek, YandexGPT, локальные модели. Плюс MCP для внешних ИИ.' },
@@ -22,7 +24,6 @@ const FEATURES = [
   { icon: Smartphone, title: 'Shorts из длинного видео', text: 'ИИ находит лучшие моменты и делает вертикальные ролики с субтитрами и лицом в центре.' },
   { icon: AppWindow, title: 'Окна как вам удобно', text: 'Любую панель можно оторвать, поставить где угодно или пристыковать к краю.' },
   { icon: Diamond, title: 'Ключевые кадры и фон', text: 'Плавное движение по ключам и удаление фона без зелёного экрана — прямо на компьютере.' },
-  { icon: Captions, title: 'Субтитры из речи', text: 'Распознавание речи и красивые подписи в один клик.' },
   { icon: Wand2, title: 'Цвет и эффекты', text: '10 готовых стилей, яркость, контраст, виньетка, плёнка, плавное приближение.' },
   { icon: Mic2, title: 'Голос как в студии', text: 'Шумоподавление и ровная громкость одной кнопкой, музыка тише под речь.' },
   { icon: ScanFace, title: 'Вертикаль с лицом', text: 'Видео 16:9 становится 9:16, а «камера» сама держит человека в кадре.' },
