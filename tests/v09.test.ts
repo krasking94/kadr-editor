@@ -50,7 +50,7 @@ test('кривая скорости: FFmpeg делает видео и звук 
   const g = rampFilterGraph(pts, 4, 30, true);
   const r = spawnSync(ff, ['-y', '-loglevel', 'error', '-i', src, '-filter_complex', g.graph, ...g.maps.flatMap(m => ['-map', m]), '-c:v', 'libx264', '-c:a', 'aac', out]);
   assert.equal(r.status, 0, r.stderr.toString().slice(-1500));
-  const dur = (sel: string) => Number(spawnSync('ffprobe', ['-v', 'error', '-select_streams', sel, '-show_entries', 'stream=duration', '-of', 'csv=p=0', out]).stdout.toString().trim());
+  const dur = (sel: string) => Number(spawnSync(ff.replace(/ffmpeg(\.exe)?$/, 'ffprobe$1'), ['-v', 'error', '-select_streams', sel, '-show_entries', 'stream=duration', '-of', 'csv=p=0', out]).stdout.toString().trim());
   const want = rampDuration(pts, 4);
   assert.ok(Math.abs(dur('v:0') - want) < 0.15, `видео ${dur('v:0')} ≈ ${want}`);
   assert.ok(Math.abs(dur('a:0') - dur('v:0')) < 0.12, `звук ${dur('a:0')} ≈ видео ${dur('v:0')}`);
