@@ -11,6 +11,7 @@ import {
 import { chunkWords, DEFAULT_FILLERS, findFillers } from '../../shared/speech';
 import { providerPreset } from '../../shared/providers';
 import { askConfirm, endTask, get, patchMediaEverywhere, startTask, toast, updateTask } from './store';
+import { ensureSpeech } from './local-ai';
 import { addTrack, BLOGGER_STYLE, queueExport } from './actions';
 import { cutTimeline, facePaths, HIGHLIGHTS } from './smart';
 import { faceDetector } from '../lib/face-track';
@@ -30,6 +31,7 @@ export function ensureTranscripts(o: { force?: boolean; language?: string; sourc
       const ids = new Set(mainTrack(p).clips.map(c => (c.type === 'media' ? c.origin?.mediaId ?? c.mediaId : '')));
       list = p.media.filter(m => ids.has(m.id) && m.hasAudio && !m.missing);
     }
+    if (list.length && !(await ensureSpeech(o.language))) return false;
     for (const [i, m] of list.entries()) {
       const jobId = 't' + Date.now() + i;
       const label = list.length > 1 ? `Распознаю речь (${i + 1} из ${list.length})` : 'Распознаю речь';
@@ -40,7 +42,7 @@ export function ensureTranscripts(o: { force?: boolean; language?: string; sourc
         patchMediaEverywhere(m.id, { transcript: { words, language: o.language || get().settings.ai.speechLanguage || undefined, at: Date.now() } });
       } catch (e) {
         const msg = clean(e);
-        if (msg !== 'Отменено') toast('error', 'Не удалось распознать речь', { detail: msg, ttl: 10000 });
+        if (msg !== 'Отменено') toast('error', 'Не удалось распознать речь', { detail: msg.replace(/\s*\[MODEL:[\w-]+\]/, ''), ttl: 10000 });
         return false;
       } finally {
         off();

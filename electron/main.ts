@@ -11,7 +11,8 @@ import { projectDuration } from '../shared/timeline';
 import { FFMPEG, ffmpegAvailable, probe, thumbnails, waveform, detectSilence, detectScenes, hardwareEncoders, pcm, run } from './ffmpeg';
 import { getSettings, setSettings, setSecret, secretStatus } from './settings';
 import { attachWindow, notify } from './bridge';
-import { chat, complete, listModels, resetSession, stopAi, transcribeFile } from './ai';
+import { chat, complete, listModels, resetSession, speechIsLocal, stopAi, transcribeFile } from './ai';
+import { cancelDownload, cancelSeparate, deleteModel, downloadModel, localModelsInfo, localSelfTest, localSeparate, localTranscribe, stopWorker } from './local-ai';
 import { audioSnippet, bgCleanup, bgFinish, bgFrames, bgPrepare, bgWrite, cancelProcess, makeProxy, measureLoudness, processClip, type ProcessKind, type ProcessOpts } from './process';
 import { envelope, findOffset } from '../shared/multicam';
 import { parseAnalysis } from '../shared/preflight';
@@ -125,10 +126,11 @@ function smokeTest(w: BrowserWindow) {
     const ff = ffmpegAvailable();
     const mcp = mcpServerState();
     const bridge = await bridgeSelfTest(mcp.port).catch(e => ({ ok: false, error: String(e) }));
-    console.log('SMOKE', JSON.stringify({ ui, ffmpeg: ff, mcp, bridge }));
+    const ml = await localSelfTest();
+    console.log('SMOKE', JSON.stringify({ ui, ffmpeg: ff, mcp, bridge, ml }));
     clearTimeout(fail);
     allowClose = true;
-    app.exit(ui && ff.ok && bridge.ok ? 0 : 1);
+    app.exit(ui && ff.ok && bridge.ok && ml.ok ? 0 : 1);
   });
 }
 
@@ -489,9 +491,12 @@ ipcMain.handle('render:frame', async (_e, project: Project, texts, time: number,
   return b64;
 });
 
-// Распознавание речи: сводим звук проекта и отправляем в сервис
-ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: number; end: number }, language?: string, fillers?: boolean) => {
-  const id = 's' + Date.now();
+// Распознавание речи: сводим звук проекта и отправляем в сервис (или нейросети на компьютере)
+const transcribeJobs = new Map<string, AbortController>();
+ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: number; end: number }, language?: string, fillers?: boolean, jobId?: string) => {
+  const id = jobId || 's' + Date.now();
+  const ctrl = new AbortController();
+  transcribeJobs.set(id, ctrl);
   const out = join(tempDir(), id + '.mp3');
   const plan = buildExportArgs(project, [], {
     outPath: out, format: 'mp3', width: project.width, height: project.height, fps: project.fps, quality: 'draft', encoder: 'cpu',
@@ -501,10 +506,11 @@ ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: nu
   const bi = args.indexOf('-b:a');
   if (bi >= 0) args[bi + 1] = '48k';
   args.splice(args.length - 1, 0, '-ac', '1', '-ar', '16000');
-  const r = await run(FFMPEG, args);
-  if (r.code !== 0) throw new Error('Не удалось подготовить звук: ' + lastError(r.stderr));
+  const r = await run(FFMPEG, args, { signal: ctrl.signal });
+  if (ctrl.signal.aborted) { transcribeJobs.delete(id); throw new Error('Отменено'); }
+  if (r.code !== 0) { transcribeJobs.delete(id); throw new Error('Не удалось подготовить звук: ' + lastError(r.stderr)); }
   try {
-    const segs = await transcribeFile(out, language, !!fillers);
+    const segs = await transcribeFile(out, language, !!fillers, p => notify('ai:transcribe-progress', { jobId: id, progress: p }), ctrl.signal);
     const offset = range?.start || 0;
     const total = projectDuration(project);
     return segs.map(s => ({
@@ -512,13 +518,13 @@ ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: nu
       words: s.words?.map(w => ({ ...w, s: w.s + offset, e: Math.min(w.e + offset, total) })),
     }));
   } finally {
+    transcribeJobs.delete(id);
     try { unlinkSync(out); } catch { /* ок */ }
   }
 });
 
 // Распознавание речи одного файла для монтажа через текст. Длинные записи идут кусками по 10 минут,
 // чтобы не упереться в ограничение сервиса на размер файла.
-const transcribeJobs = new Map<string, AbortController>();
 ipcMain.handle('ai:transcribe-media-cancel', (_e, jobId: string) => transcribeJobs.get(jobId)?.abort());
 ipcMain.handle('ai:transcribe-media', async (_e, jobId: string, path: string, duration: number, language?: string) => {
   const ctrl = new AbortController();
@@ -527,6 +533,12 @@ ipcMain.handle('ai:transcribe-media', async (_e, jobId: string, path: string, du
   const parts = Math.max(1, Math.ceil(duration / step - 1e-6));
   const words: { s: number; e: number; w: string }[] = [];
   try {
+    // на компьютере файл распознаётся целиком: нейросеть сама идёт по нему кусками и не ограничена размером
+    if (speechIsLocal()) {
+      const segs = await localTranscribe(path, language || getSettings().ai.speechLanguage, p => notify('ai:transcribe-progress', { jobId, progress: p }), ctrl.signal);
+      for (const seg of segs) for (const w of seg.words || []) words.push({ s: +w.s.toFixed(3), e: +Math.min(w.e, duration).toFixed(3), w: w.w });
+      return words;
+    }
     for (let i = 0; i < parts; i++) {
       if (ctrl.signal.aborted) throw new Error('Отменено');
       notify('ai:transcribe-progress', { jobId, progress: i / parts });
@@ -576,6 +588,17 @@ ipcMain.handle('ai:complete', (_e, system: string, user: string) => complete(sys
 // ── Обработка клипов, звук, запись экрана, обновления ──
 ipcMain.handle('media:process', (_e, jobId: string, kind: ProcessKind, path: string, from: number, to: number, opts?: ProcessOpts) =>
   processClip(jobId, kind, path, from, to, p => notify('media:process-progress', { jobId, progress: p }), opts));
+
+// ── 1.0: нейросети на компьютере ──
+ipcMain.handle('local:info', () => localModelsInfo());
+ipcMain.handle('local:download', (_e, jobId: string, id) => downloadModel(jobId, id, (p, text) => notify('local:progress', { jobId, progress: p, text })));
+ipcMain.handle('local:download-cancel', (_e, jobId: string) => cancelDownload(jobId));
+ipcMain.handle('local:delete', (_e, id) => deleteModel(id));
+ipcMain.handle('local:separate', (_e, jobId: string, path: string, from: number, to: number, quality: 'fast' | 'best') =>
+  localSeparate(jobId, path, from, to, quality, p => notify('media:process-progress', { jobId, progress: p })));
+ipcMain.handle('local:separate-cancel', (_e, jobId: string) => cancelSeparate(jobId));
+ipcMain.handle('ai:speech-local', () => speechIsLocal());
+app.on('before-quit', () => stopWorker());
 
 // ── 0.9: отчёты об ошибках ──
 ipcMain.handle('crash:list', () => ({ reports: listReports(), unclean: crashState.unclean, dir: reportsDir() }));

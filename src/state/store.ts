@@ -42,6 +42,7 @@ export interface ConfirmRequest {
   title: string;
   text: string;
   buttons: { label: string; kind?: 'primary' | 'danger' | 'ghost'; value: string }[];
+  icon?: 'download'; // без него: предупреждение, если есть опасная кнопка, иначе — вопрос
   resolve: (value: string) => void;
 }
 

@@ -13,6 +13,7 @@ import { loadSettings, watchSystemTheme } from './state/settings-actions';
 import { handleKey } from './lib/commands';
 import { loadFonts } from './lib/fonts';
 import { MenuHost } from './components/ui';
+import { TipHost } from './components/TipHost';
 import { Welcome } from './components/Welcome';
 import { Editor } from './components/Editor';
 import { Toasts } from './components/Toasts';
@@ -137,6 +138,7 @@ export function App() {
       <Tour />
       <Toasts />
       <MenuHost />
+      <TipHost />
       {dragging && (
         <div className="drop-overlay">
           <div><FilePlus2 size={40} />Отпустите, чтобы добавить файлы<small style={{ fontWeight: 400, opacity: .8 }}>Видео, фото, музыка или проект .kadr</small></div>

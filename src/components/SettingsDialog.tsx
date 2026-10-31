@@ -2,7 +2,7 @@
 import { defaultLayout } from '../../shared/settings';
 import { mirror } from '../../shared/layout';
 import { useEffect, useState } from 'react';
-import { Clapperboard, Stamp, Send, Bug } from 'lucide-react';
+import { Clapperboard, Stamp, Send, Bug, HardDrive, Download, X } from 'lucide-react';
 import { AudioLines, Bot, CheckCircle2, Copy, Cpu, ExternalLink, ImagePlus, Info, Keyboard, KeyRound, Loader2, Palette, Play, Plug, Plus, RefreshCw, Server, Settings as Gear, Trash2 } from 'lucide-react';
 import { ELEVEN_TTS_MODELS, IMAGE_PROVIDERS, imageProvider, VIDEO_MODELS, type Voice } from '../../shared/generators';
 import { api, mediaUrl } from '../api';
@@ -20,10 +20,13 @@ import { installUpdateNow } from '../state/actions';
 import { ColorInput, Modal, Segmented, Slider, Switch } from './ui';
 import { ShortcutsList } from './ShortcutsDialog';
 import { Logo } from './Logo';
+import { LOCAL_MODELS, mb, type LocalModelId } from '../../shared/local-models';
+import { deleteModel, downloadModel, refreshLocal, useLocal } from '../state/local-ai';
 
 const NAV = [
   { id: 'general', label: 'Общие', icon: Palette },
   { id: 'ai', label: 'Нейросети', icon: Bot },
+  { id: 'local', label: 'На компьютере', icon: HardDrive },
   { id: 'gen', label: 'Картинки, звук, видео', icon: ImagePlus },
   { id: 'brand', label: 'Бренд-кит', icon: Stamp },
   { id: 'mcp', label: 'Внешний ИИ (MCP)', icon: Plug },
@@ -42,9 +45,10 @@ export function SettingsDialog() {
         <div className="settings-nav">
           {NAV.map(n => <button key={n.id} className={tab === n.id ? 'on' : ''} onClick={() => set({ settingsTab: n.id })}><n.icon size={15} />{n.label}</button>)}
         </div>
-        <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16, overflow: 'auto', maxHeight: 'calc(100vh - 180px)' }}>
+        <div className="settings-body">
           {tab === 'general' && <General />}
           {tab === 'ai' && <AiSettings />}
+          {tab === 'local' && <LocalSettings />}
           {tab === 'gen' && <GenSettings />}
           {tab === 'brand' && <BrandSettings />}
           {tab === 'mcp' && <McpSettings />}
@@ -174,18 +178,23 @@ function AiSettings() {
         <b>Распознавание речи (для субтитров)</b>
         <div className="row wrap" style={{ alignItems: 'flex-end' }}>
           <div className="field grow"><label>Сервис</label>
-            <select className="input" value={s.ai.speechProvider} onChange={e => saveSettings({ ai: { ...s.ai, speechProvider: e.target.value, speechModel: providerPreset(e.target.value).speechModel || s.ai.speechModel } })}>
+            <select className="input" value={s.ai.speechProvider} onChange={e => saveSettings({ ai: { ...s.ai, speechProvider: e.target.value, speechModel: e.target.value === 'local' ? '' : providerPreset(e.target.value).speechModel || s.ai.speechModel } })}>
+              <option value="local">На компьютере — без интернета и бесплатно</option>
               {SPEECH_PROVIDERS.map(id => <option key={id} value={id}>{providerPreset(id).label}{providerPreset(id).needsKey && !secrets[id] ? ' — нужен ключ' : ''}</option>)}
             </select>
           </div>
-          <div className="field grow"><label>Модель</label><input className="input mono" value={s.ai.speechModel} onChange={e => saveSettings({ ai: { ...s.ai, speechModel: e.target.value } })} /></div>
+          {s.ai.speechProvider !== 'local' && <div className="field grow"><label>Модель</label><input className="input mono" value={s.ai.speechModel} onChange={e => saveSettings({ ai: { ...s.ai, speechModel: e.target.value } })} /></div>}
           <div className="field" style={{ width: 110 }}><label>Язык</label>
             <select className="input" value={s.ai.speechLanguage} onChange={e => saveSettings({ ai: { ...s.ai, speechLanguage: e.target.value } })}>
               {[['ru', 'Русский'], ['en', 'English'], ['uk', 'Українська'], ['kk', 'Қазақша'], ['de', 'Deutsch'], ['', 'Авто']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
         </div>
-        <div className="small-text muted">Ключ для распознавания берётся из того же сервиса выше. Groq даёт бесплатный лимит.</div>
+        <div className="small-text muted">{s.ai.speechProvider === 'local'
+          ? <>Речь распознаёт нейросеть прямо на компьютере: GigaAM для русского и Whisper для других языков. Она скачивается один раз при первых субтитрах. <a style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => set({ settingsTab: 'local' })}>Нейросети на компьютере</a></>
+          : providerPreset(s.ai.speechProvider).needsKey && !secrets[s.ai.speechProvider]
+            ? 'У этого сервиса нет ключа, поэтому речь пока распознаётся на компьютере. Вставьте ключ выше, если хотите распознавать через сервис.'
+            : 'Ключ для распознавания берётся из того же сервиса выше. Groq даёт бесплатный лимит.'}</div>
       </div>
     </>
   );
@@ -209,6 +218,59 @@ function KeyField({ id, url, label = 'Ключ API' }: { id: string; url?: strin
   );
 }
 
+// Нейросети, которые работают на компьютере: что скачано, сколько места занимает, скачать или удалить
+function LocalSettings() {
+  const s = useStore(st => st.settings);
+  const { status, busy } = useLocal();
+  useEffect(() => { refreshLocal(); }, []);
+  const used = status.reduce((a, x) => a + (x.ready ? x.total : 0), 0);
+  const groups: { title: string; ids: LocalModelId[]; text: string }[] = [
+    { title: 'Распознавание речи', ids: ['asr-ru', 'asr-multi', 'vad'], text: 'Субтитры, монтаж через текст, поиск слов-паразитов и «Собери ролик сам» — без интернета и ключей.' },
+    { title: 'Голос отдельно от музыки', ids: ['sep-best', 'sep-fast'], text: 'Выберите клип и откройте справа вкладку «Звук» → «Голос и музыка». Ещё это умеет ИИ-помощник: «убери музыку из этого клипа».' },
+  ];
+  return (
+    <>
+      <div className="tip-card"><HardDrive size={18} color="var(--accent)" style={{ flex: 'none' }} />
+        <div><b>Нейросети прямо на вашем компьютере.</b> Работают без интернета, без ключей и бесплатно — видео никуда не отправляется. Каждая скачивается один раз, когда впервые понадобится, или здесь заранее. Сейчас занято: <b>{mb(used)}</b>.</div>
+      </div>
+      {groups.map(g => (
+        <div className="card" key={g.title}>
+          <b>{g.title}</b>
+          <div className="small-text muted">{g.text}</div>
+          {g.ids.map(id => {
+            const m = LOCAL_MODELS.find(x => x.id === id)!;
+            const st = status.find(x => x.id === id);
+            const b = busy[id];
+            const size = m.files.reduce((a, f) => a + f.size, 0);
+            return (
+              <div key={id} className="row" style={{ gap: 10, alignItems: 'center', padding: '6px 0', borderTop: '1px solid var(--line)' }}>
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <div><b style={{ fontWeight: 600 }}>{m.title}</b> <span className="muted small-text">· {mb(size)} · {m.license}</span></div>
+                  <div className="small-text muted">{m.what}</div>
+                  {b && <div className="progress" style={{ marginTop: 6 }}><div style={{ width: `${Math.round(b.progress * 100)}%` }} /></div>}
+                  {b && <div className="small-text muted">{b.text}</div>}
+                </div>
+                {st?.ready
+                  ? <><span className="small-text" style={{ color: 'var(--good)', whiteSpace: 'nowrap' }}><CheckCircle2 size={13} style={{ verticalAlign: -2 }} /> скачана</span>
+                    <button className="btn ghost small" data-tip="Удалить с компьютера" onClick={() => deleteModel(id)}><Trash2 size={13} /></button></>
+                  : b
+                    ? <button className="btn small" onClick={() => api.localDownloadCancel(b.jobId)}><X size={13} /> Остановить</button>
+                    : <button className="btn small" onClick={() => downloadModel(id)}><Download size={13} /> {st && st.bytes > 0 ? 'Докачать' : 'Скачать'}</button>}
+              </div>
+            );
+          })}
+          {g.ids.includes('sep-best') && (
+            <div className="field">
+              <label>Как отделять голос по умолчанию</label>
+              <Segmented value={s.separation || 'best'} options={[{ value: 'best', label: 'Качественно' }, { value: 'fast', label: 'Быстро' }]} onChange={v => saveSettings({ separation: v as 'fast' | 'best' })} />
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function GenSettings() {
   const s = useStore(st => st.settings);
   const secrets = useStore(st => st.secrets);
@@ -227,7 +289,7 @@ function GenSettings() {
   return (
     <>
       <div className="tip-card"><ImagePlus size={18} color="var(--accent)" style={{ flex: 'none' }} />
-        <div><b>Создание прямо в «Хлопушке».</b> Вкладка <b>«Создать»</b> слева рисует картинки, озвучивает текст, делает звуки и музыку и сразу кладёт их на таймлайн. Это же умеют встроенный помощник и Claude по MCP: просто попросите. Готовые файлы сохраняются в папку «Документы → Кадр → Сгенерировано».</div>
+        <div><b>Создание прямо в «Хлопушке».</b> Вкладка <b>«Создать»</b> слева рисует картинки, озвучивает текст, делает звуки и музыку и сразу кладёт их на таймлайн. Это же умеют встроенный помощник и Claude по MCP: просто попросите. Готовые файлы сохраняются в папку «Документы → Хлопушка → Сгенерировано».</div>
       </div>
       <div className="card">
         <div className="row"><ImagePlus size={16} /><b>Картинки</b></div>

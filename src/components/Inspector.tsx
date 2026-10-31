@@ -22,6 +22,7 @@ import { keysOf, prettyKeys } from '../lib/commands';
 import { keysOf as clipKeys, KEY_SNAP, removeKey, setKeyAt } from '../../shared/keyframes';
 import { ColorInput, ColorWheel, Segmented, Slider, Switch } from './ui';
 import { FollowSection, GroupButton, GroupSection, MulticamSection, RampSection, TrackSection } from './InspectorV09';
+import { separateVoice } from '../state/local-ai';
 
 export function Inspector() {
   const project = useStore(s => s.project)!;
@@ -37,8 +38,9 @@ export function Inspector() {
 
 function Tabs({ tabs, value, onChange }: { tabs: { id: string; label: string; icon: typeof Film }[]; value: string; onChange: (v: string) => void }) {
   return (
-    <div className="tabs">
-      {tabs.map(t => <button key={t.id} className={value === t.id ? 'on' : ''} onClick={() => onChange(t.id)}><t.icon size={13} />{t.label}</button>)}
+    // вкладки делят ширину поровну, значок над подписью: все видны даже в узкой панели
+    <div className="tabs insp-tabs">
+      {tabs.map(t => <button key={t.id} className={value === t.id ? 'on' : ''} onClick={() => onChange(t.id)} data-tip={t.label}><t.icon size={15} /><span>{t.label}</span></button>)}
     </div>
   );
 }
@@ -321,6 +323,7 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
                 </div>
               )}
             </div>
+            {m?.hasAudio && !m.missing && <SeparateSection clip={clip} />}
             <EqSection clip={clip} up={up} />
             <Slider label="Громкость" value={clip.volume} min={0} max={2} step={0.01} def={1} format={v => Math.round(v * 100) + '%'} onChange={v => up({ volume: v }, 'Громкость')} hint="Больше 100% — громче, чем в оригинале" />
             <Switch label="Без звука" checked={clip.muted} onChange={v => up({ muted: v }, v ? 'Звук выключен' : 'Звук включён', '')} />
@@ -334,6 +337,23 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
         )}
       </div>
     </>
+  );
+}
+
+// 1.0: голос отдельно от музыки (нейросеть на компьютере)
+function SeparateSection({ clip }: { clip: MediaClip }) {
+  const busy = useStore(s => s.tasks.some(t => t.label.startsWith('Отделяю голос')));
+  const go = (mode: 'both' | 'voice' | 'music') => separateVoice(clip.id, mode).catch(() => undefined);
+  return (
+    <div className="card" style={{ gap: 8 }}>
+      <div className="row"><AudioLines size={15} color="var(--accent)" /><b>Голос и музыка</b></div>
+      <div className="small-text muted">Нейросеть на компьютере разделит звук: голос — на одну дорожку, музыку и шум — на другую. Удобно, если в записи играла музыка или нужно сделать минусовку.</div>
+      <div className="row wrap" style={{ gap: 6 }}>
+        <button className="btn small primary" disabled={busy} onClick={() => go('both')} data-tip="Голос и музыка встанут на отдельные звуковые дорожки">Разделить на две дорожки</button>
+        <button className="btn small" disabled={busy} onClick={() => go('voice')} data-tip="Музыка и фон пропадут, останется чистый голос">Только голос</button>
+        <button className="btn small" disabled={busy} onClick={() => go('music')} data-tip="Голос пропадёт — получится минусовка">Убрать голос</button>
+      </div>
+    </div>
   );
 }
 

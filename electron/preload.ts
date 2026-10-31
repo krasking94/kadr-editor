@@ -136,6 +136,16 @@ const api = {
   onPublishProgress: on('publish:progress'),
   fileSize: call('file:size'),
 
+  // 1.0: нейросети на компьютере
+  localInfo: call('local:info'),
+  localDownload: call('local:download'),
+  localDownloadCancel: call('local:download-cancel'),
+  localDelete: call('local:delete'),
+  onLocalProgress: on('local:progress'),
+  separateVoice: call('local:separate'),
+  separateVoiceCancel: call('local:separate-cancel'),
+  speechLocal: call('ai:speech-local'),
+
   onToolCall: on('tool:call'),
   toolResult: (id: number, result: unknown) => ipcRenderer.send('tool:result', id, result),
 };

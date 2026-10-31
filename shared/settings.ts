@@ -65,6 +65,8 @@ export interface Settings {
   publish: PublishSettings;
   reports: { url: string; auto: boolean }; // куда отправлять отчёты об ошибках (пусто — только сохранять на компьютере)
   prompter: { text: string; speed: number; size: number; mirror: boolean };
+  // с 1.0
+  separation: 'fast' | 'best'; // как отделять голос от музыки: быстро или качественно
 }
 
 export interface PublishSettings {
@@ -129,10 +131,12 @@ export const defaultSettings = (): Settings => ({
   layout: defaultLayout(),
   brand: defaultBrand(),
   tourDone: false,
-  ai: { provider: 'anthropic', providers: {}, speechProvider: 'openai', speechModel: 'whisper-1', speechLanguage: 'ru' },
+  // речь по умолчанию распознаётся на компьютере: без ключей и интернета (с 1.0)
+  ai: { provider: 'anthropic', providers: {}, speechProvider: 'local', speechModel: '', speechLanguage: 'ru' },
   gen: { imageProvider: 'openai', imageModels: {}, imageBaseUrl: '', imageAspect: 'auto', voiceId: '', voiceName: '', ttsModel: 'eleven_v4', videoModel: 'fal-ai/kling-video/v2.5-turbo/pro/text-to-video', videoImageModel: 'fal-ai/kling-video/v2.5-turbo/pro/image-to-video', videoDuration: 5 },
   mcp: { serverEnabled: true, port: 7788, clients: [] },
   publish: defaultPublish(),
   reports: { url: '', auto: false },
   prompter: defaultPrompter(),
+  separation: 'best',
 });

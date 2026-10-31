@@ -32,9 +32,11 @@
     "electron-builder": "26.17.0",
     "electron-updater": "6.8.10",
     "esbuild": "0.28.2",
+    "koffi": "2.16.3",
     "lucide-react": "1.56.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "sherpa-onnx-node": "1.13.8",
     "typescript": "6.0.3",
     "vite": "8.3.4",
     "zod": "4.6.7",
@@ -72,12 +74,32 @@
         "to": "mcp-bridge.js"
       },
       {
+        "from": "dist-electron/ml-worker.js",
+        "to": "ml-worker.js"
+      },
+      {
         "from": "resources/ffmpeg/win32",
         "to": "ffmpeg",
         "filter": [
           "*.exe",
           "*.dll",
           "LICENSE*"
+        ]
+      },
+      {
+        "from": "node_modules/sherpa-onnx-win-x64",
+        "to": "ml",
+        "filter": [
+          "*.node",
+          "*.dll",
+          "LICENSE*"
+        ]
+      },
+      {
+        "from": "node_modules/koffi/build/koffi/win32_x64",
+        "to": "ml",
+        "filter": [
+          "koffi.node"
         ]
       }
     ],

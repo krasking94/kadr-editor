@@ -181,7 +181,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'transcribe', title: 'Распознаю речь',
-    description: 'Transcribe speech of the whole project (or one clip) with the configured speech-to-text service. Returns timed segments. Set add_subtitles=true to put them on the timeline.',
+    description: 'Transcribe speech of the whole project (or one clip) with the configured speech-to-text (by default an on-device model, no internet needed). Returns timed segments. Set add_subtitles=true to put them on the timeline.',
     inputSchema: obj({ clip_id: str('Optional clip id'), add_subtitles: bool('Add as subtitles'), language: str('Language code, e.g. ru, en') }),
   },
   {
@@ -493,6 +493,11 @@ export const TOOLS: ToolDef[] = [
       subtitles: bool('Add subtitles (default true)'), title: bool('Add a title (default true)'), music_id: str('Music media id'),
       replace: bool('Replace the current main track instead of appending'),
     }, ['request']),
+  },
+  {
+    name: 'separate_voice', title: 'Отделяю голос от музыки',
+    description: 'Split a clip audio into voice and everything else (music, background) with an on-device neural network. mode=both puts voice and music on separate audio tracks; voice keeps only speech; music removes the voice (karaoke). The original video stays, muted. Takes about the clip length with quality=best, a few seconds per minute with quality=fast.',
+    inputSchema: obj({ clip_id: str('Clip with sound'), mode: str('What to keep', ['both', 'voice', 'music']), quality: str('Model', ['best', 'fast']) }, ['clip_id']),
   },
   {
     name: 'open_publish', title: 'Открываю публикацию',
