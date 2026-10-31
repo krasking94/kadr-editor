@@ -1,6 +1,6 @@
 // Стартовый экран: выбрать формат нового ролика, открыть недавний проект или пример.
 import { useEffect, useState } from 'react';
-import { Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, Plug, Settings, Sparkles, Undo2, Wand2, X, ScrollText, Smartphone, AppWindow, Diamond, Mic2, ScanFace, WandSparkles, Send, Video, Crosshair } from 'lucide-react';
+import { Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, LifeBuoy, Plug, Settings, Sparkles, Undo2, Wand2, X, ScrollText, Smartphone, AppWindow, Diamond, Mic2, ScanFace, WandSparkles, Send, Video, Crosshair } from 'lucide-react';
 import { api } from '../api';
 import { FORMAT_PRESETS } from '../../shared/timeline';
 import { set, useStore } from '../state/store';
@@ -57,6 +57,7 @@ export function Welcome() {
       </div>
       <div className="titlebar" style={{ background: 'transparent', borderBottom: 0, position: 'relative' }}>
         <div className="drag" />
+        <button className="btn ghost small" data-tip={'Как что сделать — простыми словами\nF1'} onClick={() => set({ dialog: 'help' })}><LifeBuoy size={15} /> Справка</button>
         <button className="icon-btn" data-tip="Горячие клавиши" onClick={() => set({ dialog: 'shortcuts' })}><Keyboard size={16} /></button>
         <button className="icon-btn" data-tip="Настройки" onClick={() => set({ dialog: 'settings', settingsTab: 'general' })}><Settings size={16} /></button>
       </div>

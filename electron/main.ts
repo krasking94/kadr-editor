@@ -668,9 +668,27 @@ ipcMain.handle('media:preflight', async (_e, jobId: string, project: Project, te
   const total = projectDuration(project);
   const w = Math.max(2, Math.round(Math.min(480, project.width) / 2) * 2);
   const h = Math.max(2, Math.round((w * project.height) / Math.max(1, project.width) / 2) * 2);
-  const res = await runExport(jobId, project, texts, {
-    outPath: join(tempDir(), jobId + '.mp4'), format: 'mp4', width: w, height: h, fps: Math.min(15, project.fps), quality: 'draft', encoder: 'cpu',
-  }, p => notify('media:process-progress', { jobId, progress: p }), args => {
+  const small = { outPath: join(tempDir(), jobId + '.mp4'), format: 'mp4' as const, width: w, height: h, fps: Math.min(15, project.fps), quality: 'draft' as const, encoder: 'cpu' as const };
+  if (inputLoad(project, texts) > MAX_INPUTS) {
+    // тяжёлый проект: сначала маленькая копия по частям, потом смотрим её одним проходом
+    try {
+      const made = await runExport(jobId, project, texts, small, p => notify('media:process-progress', { jobId, progress: p * 0.8 }));
+      if (!made.ok) throw new Error(made.canceled ? 'Отменено' : made.error || 'Проверка не удалась');
+      const ctrl = new AbortController();
+      jobs.set(jobId, ctrl);
+      const r = await run(FFMPEG, ['-hide_banner', '-nostdin', '-progress', 'pipe:1', '-nostats', '-i', small.outPath, '-filter_complex',
+        '[0:v]blackdetect=d=0.4:pix_th=0.08,freezedetect=n=-60dB:d=3[pfv];[0:a]silencedetect=n=-50dB:d=3,ebur128=peak=true[pfa]', '-map', '[pfv]', '-map', '[pfa]', '-f', 'null', '-'], {
+        signal: ctrl.signal,
+        onStdout: o => { const m = [...o.matchAll(/out_time_us=(\d+)/g)].pop(); if (m) notify('media:process-progress', { jobId, progress: 0.8 + 0.2 * Math.min(1, Number(m[1]) / 1e6 / Math.max(0.1, total)) }); },
+      });
+      jobs.delete(jobId);
+      if (ctrl.signal.aborted) throw new Error('Отменено');
+      return parseAnalysis(r.stderr, total);
+    } finally {
+      try { unlinkSync(small.outPath); } catch { /* нет файла */ }
+    }
+  }
+  const res = await runExport(jobId, project, texts, small, p => notify('media:process-progress', { jobId, progress: p }), args => {
     const fi = args.indexOf('-filter_complex');
     const maps = args.map((a, i) => (a === '-map' ? args[i + 1] : '')).filter(Boolean);
     const [v, a] = maps;

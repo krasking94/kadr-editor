@@ -22,6 +22,7 @@ import { ExportDialog } from './components/ExportDialog';
 import { SettingsDialog } from './components/SettingsDialog';
 import { CommandPalette } from './components/CommandPalette';
 import { ShortcutsDialog } from './components/ShortcutsDialog';
+import { HelpDialog } from './components/HelpDialog';
 import { CrashNotice, DraftDialog, MulticamDialog, PreflightDialog, PublishDialog } from './components/V09Dialogs';
 import { Prompter } from './components/Prompter';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -138,6 +139,7 @@ export function App() {
       {dialog === 'settings' && <SettingsDialog />}
       {dialog === 'palette' && <CommandPalette />}
       {dialog === 'shortcuts' && <ShortcutsDialog />}
+      {dialog === 'help' && <HelpDialog />}
       {dialog === 'cover' && <CoverDialog />}
       {dialog === 'preflight' && <PreflightDialog />}
       {dialog === 'publish' && <PublishDialog />}

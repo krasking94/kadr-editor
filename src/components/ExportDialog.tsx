@@ -222,7 +222,7 @@ export function ExportDialog() {
         </div>
         {format !== 'gif' && (
           <div className="field" style={{ minWidth: 220 }}>
-            <label><Volume2 size={12} style={{ verticalAlign: -1 }} /> Громкость</label>
+            <label><span><Volume2 size={12} style={{ verticalAlign: -1 }} /> Громкость</span></label>
             <select className="input" value={loudness} onChange={e => setLoudness(Number(e.target.value))}>
               <option value={-14}>Для YouTube, ВК, Telegram (−14 LUFS)</option>
               <option value={-16}>Для подкастов и Apple (−16 LUFS)</option>

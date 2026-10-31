@@ -1,6 +1,6 @@
 // Верхняя полоса окна: меню, название проекта, отмена/возврат, ИИ и кнопка «Сохранить видео».
 import { useEffect, useState } from 'react';
-import { Command as CmdIcon, Download, History, Redo2, Send, Sparkles, Undo2 } from 'lucide-react';
+import { Command as CmdIcon, Download, History, LifeBuoy, Redo2, Send, Sparkles, Undo2 } from 'lucide-react';
 import { api } from '../api';
 import { COMMANDS, prettyKeys, type Command } from '../lib/commands';
 import { commit, redo, set, sourceLabel, undo, useStore } from '../state/store';
@@ -60,6 +60,7 @@ export function TitleBar() {
         data-tip={future[0] ? `Вернуть: ${future[0].label}\nCtrl+Y` : 'Возвращать нечего'}><Redo2 size={17} /></button>
       <button className={'icon-btn' + (historyOpen ? ' active' : '')} onClick={() => set(s => ({ historyOpen: !s.historyOpen }))} data-tip={'История шагов\nCtrl+H'}><History size={17} /></button>
       <div className="drag" />
+      <button className="icon-btn" onClick={() => set({ dialog: 'help' })} data-tip={'Справка: как что сделать\nF1'}><LifeBuoy size={17} /></button>
       <button className="btn ghost small" onClick={() => set({ dialog: 'palette' })} data-tip="Найти любую команду">
         <CmdIcon size={14} /> Команды <kbd>Ctrl K</kbd>
       </button>

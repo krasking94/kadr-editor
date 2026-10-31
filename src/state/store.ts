@@ -47,7 +47,7 @@ export interface ConfirmRequest {
 }
 
 export interface QueueItem { id: string; name: string; outPath: string; state: 'wait' | 'run' | 'done' | 'error' | 'canceled'; error?: string }
-export type Dialog = 'export' | 'settings' | 'palette' | 'shortcuts' | 'about' | 'cover' | 'preflight' | 'publish' | 'draft' | 'multicam' | 'reports' | null;
+export type Dialog = 'export' | 'settings' | 'palette' | 'shortcuts' | 'about' | 'cover' | 'preflight' | 'publish' | 'draft' | 'multicam' | 'reports' | 'help' | null;
 
 interface State {
   screen: 'welcome' | 'editor';
@@ -74,6 +74,8 @@ interface State {
   historyOpen: boolean;
   dialog: Dialog;
   settingsTab: string;
+  /** Какую статью справки открыть (F1 открывает первую) */
+  helpArticle?: string;
   confirm: ConfirmRequest | null;
   clipboard: unknown[];
   safeZones: boolean;

@@ -27,6 +27,7 @@ export function Slider(p: {
         />
         <input
           className="input num-input" value={text ?? shown + (p.unit || '')}
+          style={(shown + (p.unit || '')).length > 7 ? { width: Math.min(140, 22 + (shown + (p.unit || '')).length * 7.2) } : undefined}
           onFocus={e => { setText(shown); setTimeout(() => e.target.select()); }}
           onChange={e => setText(e.target.value)}
           onBlur={() => {
