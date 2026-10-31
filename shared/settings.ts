@@ -35,6 +35,8 @@ export interface Settings {
   loudness: number; // громкость при сохранении, LUFS; 0 — не выравнивать
   proxy: 'auto' | 'off'; // лёгкие копии тяжёлых видео для плавного просмотра
   layout: Layout;
+  brand: Brand; // бренд-кит: свои цвета, шрифт и логотип (с 0.7)
+  tourDone: boolean; // короткое обучение уже показано
   ai: {
     provider: string;
     providers: Record<string, ProviderSettings>;
@@ -50,6 +52,9 @@ export interface Settings {
     voiceId: string;
     voiceName: string;
     ttsModel: string;
+    videoModel: string; // ИИ-видео (fal.ai): модель для ролика по описанию
+    videoImageModel: string; // и для «оживить фото»
+    videoDuration: number; // секунды
   };
   mcp: {
     serverEnabled: boolean;
@@ -57,6 +62,22 @@ export interface Settings {
     clients: McpClientConfig[];
   };
 }
+
+export interface Brand {
+  name: string; // название канала или компании, например @мой_канал
+  font: string;
+  primary: string; // главный цвет: плашки титров
+  accent: string; // второй цвет: выделения
+  text: string; // цвет надписей
+  logo: string; // путь к картинке логотипа
+  logoCorner: 'tl' | 'tr' | 'bl' | 'br';
+  logoSize: number; // доля высоты кадра
+  logoOpacity: number;
+}
+
+export const defaultBrand = (): Brand => ({
+  name: '', font: 'Montserrat', primary: '#7c5cff', accent: '#ffd60a', text: '#ffffff', logo: '', logoCorner: 'tr', logoSize: 0.12, logoOpacity: 0.9,
+});
 
 // Расположение панелей: ширины тянутся мышкой, стороны можно поменять местами
 export interface Layout {
@@ -91,7 +112,9 @@ export const defaultSettings = (): Settings => ({
   loudness: -14,
   proxy: 'auto',
   layout: defaultLayout(),
+  brand: defaultBrand(),
+  tourDone: false,
   ai: { provider: 'anthropic', providers: {}, speechProvider: 'openai', speechModel: 'whisper-1', speechLanguage: 'ru' },
-  gen: { imageProvider: 'openai', imageModels: {}, imageBaseUrl: '', imageAspect: 'auto', voiceId: '', voiceName: '', ttsModel: 'eleven_v4' },
+  gen: { imageProvider: 'openai', imageModels: {}, imageBaseUrl: '', imageAspect: 'auto', voiceId: '', voiceName: '', ttsModel: 'eleven_v4', videoModel: 'fal-ai/kling-video/v2.5-turbo/pro/text-to-video', videoImageModel: 'fal-ai/kling-video/v2.5-turbo/pro/image-to-video', videoDuration: 5 },
   mcp: { serverEnabled: true, port: 7788, clients: [] },
 });

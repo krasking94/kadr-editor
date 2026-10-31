@@ -4,7 +4,9 @@ import {
   AlignCenter, AlignLeft, AlignRight, AudioLines, Bold, CaseUpper, Clapperboard, Film, Gauge, Image as ImageIcon, Italic, Lightbulb,
   Move, Music, Palette, RotateCcw, Scissors, SlidersHorizontal, Snowflake, Sparkles, Trash2, Type, Volume2, Blend,
   Vibrate, Rewind, Undo2, ScanFace, Pipette, FileImage, Mic2, Headphones, Highlighter, Diamond, ChevronLeft, ChevronRight, X, UserRoundX,
+  Crop as CropIcon, Layers, Wand2, EyeOff, SlidersVertical, Waves,
 } from 'lucide-react';
+import { BLEND_MODES, EQ_PRESETS, MASKS, NO_CROP, NO_EQ, defaultWheels, hasEq, hasWheels } from '../../shared/look';
 import { mediaUrl } from '../api';
 import type { MediaClip, MediaItem, TextAnim, TextClip, TransitionType } from '../../shared/types';
 import {
@@ -18,7 +20,7 @@ import { api } from '../api';
 import { FONTS } from '../lib/fonts';
 import { keysOf, prettyKeys } from '../lib/commands';
 import { keysOf as clipKeys, KEY_SNAP, removeKey, setKeyAt } from '../../shared/keyframes';
-import { ColorInput, Segmented, Slider, Switch } from './ui';
+import { ColorInput, ColorWheel, Segmented, Slider, Switch } from './ui';
 
 export function Inspector() {
   const project = useStore(s => s.project)!;
@@ -79,6 +81,7 @@ function ProjectInspector() {
             options={['24', '25', '30', '50', '60'].map(v => ({ value: v, label: v, tip: v === '24' ? 'Как в кино' : v === '30' ? 'Обычное видео' : v === '60' ? 'Плавно, для игр и спорта' : undefined }))} />
           <ColorInput label="Цвет фона" value={p.background} onChange={v => commit('Цвет фона', pr => { pr.background = v; }, { coalesce: 'bg' })} />
         </div>
+        <MixerSection />
         <div className="insp-section">
           <h4>Сводка</h4>
           <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Длина ролика</span><b className="mono">{formatTime(projectDuration(p), p.fps, true)}</b></div>
@@ -95,6 +98,23 @@ function ProjectInspector() {
         </div>
       </div>
     </>
+  );
+}
+
+// Микшер: громкость каждой дорожки целиком
+function MixerSection() {
+  const tracks = useStore(s => s.project!.tracks);
+  const withSound = tracks.filter(t => t.kind !== 'text' && t.clips.some(c => c.type === 'media'));
+  if (!withSound.length) return null;
+  return (
+    <div className="insp-section">
+      <h4><Volume2 size={14} /> Громкость дорожек</h4>
+      {withSound.map(t => (
+        <Slider key={t.id} label={t.name} value={t.volume ?? 1} min={0} max={2} step={0.01} def={1} format={v => Math.round(v * 100) + '%'}
+          onChange={v => commit(`Громкость дорожки «${t.name}»`, p => { const tr = p.tracks.find(x => x.id === t.id); if (tr) tr.volume = Math.abs(v - 1) < 1e-3 ? undefined : v; }, { coalesce: 'tv:' + t.id })} />
+      ))}
+      <div className="small-text muted">Как микшер в студии: делает тише или громче всю дорожку сразу, например всю музыку.</div>
+    </div>
   );
 }
 
@@ -152,8 +172,10 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
   const m = project.media.find(x => x.id === clip.mediaId);
   const thumb = m ? cache[m.id]?.thumb : undefined;
   const isAudio = m?.kind === 'audio';
+  const adj = !!clip.adjust;
   const tabs = isAudio
     ? [{ id: 'audio', label: 'Звук', icon: Volume2 }]
+    : adj ? [{ id: 'main', label: 'Основное', icon: SlidersHorizontal }, { id: 'color', label: 'Цвет', icon: Palette }, { id: 'fx', label: 'Эффекты', icon: Sparkles }]
     : [{ id: 'main', label: 'Основное', icon: SlidersHorizontal }, { id: 'color', label: 'Цвет', icon: Palette }, { id: 'fx', label: 'Эффекты', icon: Sparkles }, { id: 'motion', label: 'Движение', icon: Move }, ...(m?.hasAudio ? [{ id: 'audio', label: 'Звук', icon: Volume2 }] : [])];
   const [tab, setTab] = useTab(tabs.map(t => t.id));
   const up = (patch: A.MediaClipPatch, label: string, key?: string) => A.updateMediaClip(clip.id, patch, label, key === undefined ? {} : { coalesce: key });
@@ -166,10 +188,12 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
 
   return (
     <>
-      <ClipSummary media={m} thumb={thumb} sub={`${formatTime(clipDuration(clip), project.fps, true)} · ${where}${clip.speed !== 1 ? ` · ×${clip.speed}` : ''}`} />
+      {adj ? <ClipSummary media={{ ...m!, name: 'Корректирующий слой' }} sub={`${formatTime(clipDuration(clip), project.fps, true)} · красит всё, что ниже`} />
+        : <ClipSummary media={m} thumb={thumb} sub={`${formatTime(clipDuration(clip), project.fps, true)} · ${where}${clip.speed !== 1 ? ` · ×${clip.speed}` : ''}`} />}
       <Tabs tabs={tabs} value={tab} onChange={setTab} />
       <div className="panel-body" style={{ padding: 0 }}>
-        {tab === 'main' && (
+        {tab === 'main' && adj && <AdjustMain clip={clip} up={up} />}
+        {tab === 'main' && !adj && (
           <>
             <div className="insp-section">
               <h4><Gauge size={14} /> Скорость</h4>
@@ -177,6 +201,10 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
                 {[0.25, 0.5, 1, 1.5, 2, 4].map(sp => <button key={sp} className={'chip' + (clip.speed === sp ? ' on' : '')} style={clip.speed === sp ? { borderColor: 'var(--accent)', color: 'var(--text)', background: 'var(--accent-soft)' } : undefined} onClick={() => up({ speed: sp }, `Скорость ×${sp}`, '')}>×{sp}</button>)}
               </div>
               <Slider label="Точно" value={clip.speed} min={0.1} max={8} step={0.05} def={1} format={v => '×' + v.toFixed(2)} onChange={v => up({ speed: v }, 'Скорость клипа')} />
+              {m?.kind === 'video' && clip.speed < 1 && (
+                <Switch label="Плавное замедление" hint={'Программа дорисует недостающие кадры по движению, и замедленное видео не будет дёргаться.\nВидно в готовом видео. Сохранение такого клипа идёт заметно дольше.'}
+                  checked={!!clip.smooth} onChange={v => up({ smooth: v }, v ? 'Плавное замедление' : 'Плавное замедление выключено', '')} />
+              )}
             </div>
             {trackKind === 'main' && (
               <div className="insp-section">
@@ -204,6 +232,8 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
               <Slider label="Непрозрачность" value={tr.opacity} min={0} max={1} step={0.01} def={1} format={v => Math.round(v * 100) + '%'} onChange={v => up({ transform: { opacity: v } }, 'Прозрачность')} />
               <button className="btn small ghost" onClick={() => up({ keys: [], transform: trackKind === 'video' ? { x: 0.75, y: 0.27, scale: 0.4, rotation: 0, opacity: 1 } : defaultTransform() }, 'Положение сброшено', '')}><RotateCcw size={13} /> Сбросить положение</button>
             </div>
+            {trackKind === 'video' && <BlendSection clip={clip} up={up} />}
+            {m && m.kind !== 'audio' && <CropSection clip={clip} up={up} />}
             <div className="insp-section">
               <h4>Появление и исчезновение</h4>
               <Slider label="Плавное появление" value={clip.fadeIn} min={0} max={3} step={0.05} def={0} unit=" с" onChange={v => up({ fadeIn: v }, 'Плавное появление')} />
@@ -239,8 +269,12 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
               <Slider label="Насыщенность" value={clip.color.saturation} min={0} max={3} step={0.01} def={1} format={v => Math.round(v * 100) + '%'} onChange={v => up({ color: { saturation: v } }, 'Насыщенность')} hint="0% — чёрно-белое видео" />
               <Slider label="Гамма (средние тона)" value={clip.color.gamma} min={0.4} max={2.5} step={0.01} def={1} format={v => v.toFixed(2)} onChange={v => up({ color: { gamma: v } }, 'Гамма')} />
               <Slider label="Тепло / холод" value={clip.color.temperature} min={-1} max={1} step={0.01} def={0} format={v => (v > 0 ? 'теплее ' : v < 0 ? 'холоднее ' : '') + Math.abs(Math.round(v * 100))} onChange={v => up({ color: { temperature: v } }, 'Цветовая температура')} />
-              <button className="btn small ghost" onClick={() => up({ color: defaultColor() }, 'Цвет сброшен', '')}><RotateCcw size={13} /> Сбросить цвет</button>
+              <div className="row wrap">
+                {!adj && m?.kind !== 'audio' && <button className="btn small" data-tip="Программа посмотрит на кадр под курсором и сама выровняет яркость, контраст и баланс белого" onClick={() => S.autoColor(clip.id).catch(() => undefined)}><Wand2 size={13} /> Автоцвет</button>}
+                <button className="btn small ghost" onClick={() => up({ color: defaultColor() }, 'Цвет сброшен', '')}><RotateCcw size={13} /> Сбросить цвет</button>
+              </div>
             </div>
+            <WheelsSection clip={clip} up={up} />
             <div className="insp-section">
               <h4><FileImage size={14} /> LUT — готовый цветовой рецепт</h4>
               <div className="small-text muted">Файлы .cube продаются и раздаются бесплатно: «кино», «тёплый закат», «как на плёнке». Видно сразу в окне просмотра.</div>
@@ -261,7 +295,8 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
             <Switch label="Отразить по горизонтали" checked={clip.effects.flipH} onChange={v => up({ effects: { flipH: v } }, 'Отражение', '')} />
             <Switch label="Отразить по вертикали" checked={clip.effects.flipV} onChange={v => up({ effects: { flipV: v } }, 'Отражение', '')} />
             <button className="btn small ghost" onClick={() => up({ effects: defaultEffects() }, 'Эффекты сброшены', '')}><RotateCcw size={13} /> Сбросить эффекты</button>
-            <KeySection clip={clip} up={up} />
+            {!adj && <KeySection clip={clip} up={up} />}
+            {!adj && m?.kind === 'video' && <FacesSection clip={clip} up={up} />}
           </div>
         )}
         {tab === 'motion' && <MotionTab clip={clip} up={up} />}
@@ -279,10 +314,12 @@ function MediaInspector({ clip, trackKind, index }: { clip: MediaClip; trackKind
                 </div>
               )}
             </div>
+            <EqSection clip={clip} up={up} />
             <Slider label="Громкость" value={clip.volume} min={0} max={2} step={0.01} def={1} format={v => Math.round(v * 100) + '%'} onChange={v => up({ volume: v }, 'Громкость')} hint="Больше 100% — громче, чем в оригинале" />
             <Switch label="Без звука" checked={clip.muted} onChange={v => up({ muted: v }, v ? 'Звук выключен' : 'Звук включён', '')} />
             <Slider label="Плавное начало звука" value={clip.audioFadeIn} min={0} max={5} step={0.05} def={0} unit=" с" onChange={v => up({ audioFadeIn: v }, 'Плавное начало звука')} />
             <Slider label="Плавный конец звука" value={clip.audioFadeOut} min={0} max={5} step={0.05} def={0} unit=" с" onChange={v => up({ audioFadeOut: v }, 'Плавный конец звука')} />
+            {trackKind === 'audio' && m?.kind === 'audio' && <button className="btn small" data-tip="Музыка обрежется точно на доле в конце ролика и красиво затихнет. Если трек короче видео — он повторится" onClick={() => S.fitMusic(clip.id).catch(() => undefined)}><Music size={13} /> Подогнать под длину ролика</button>}
             {trackKind === 'audio' && <Switch label="Приглушать, когда говорят" hint="Музыка становится тише, когда в основном видео звучит голос" checked={!!clip.duck} onChange={v => up({ duck: v }, v ? 'Музыка тише под голос' : 'Приглушение выключено', '')} />}
             {m?.kind === 'video' && m.hasAudio && <button className="btn small" onClick={() => A.detachAudio(clip.id)}><AudioLines size={13} /> Отделить звук на отдельную дорожку</button>}
             {trackKind === 'main' && m?.hasAudio && <button className="btn small" onClick={() => A.removeSilence({ clipId: clip.id })}><Scissors size={13} /> Убрать паузы в этом клипе</button>}
@@ -331,6 +368,144 @@ function MotionTab({ clip, up }: { clip: MediaClip; up: (patch: A.MediaClipPatch
 }
 
 type Up = (patch: A.MediaClipPatch, label: string, key?: string) => void;
+
+// ── 0.7 ──────────────────────────────────────────────
+function AdjustMain({ clip, up }: { clip: MediaClip; up: Up }) {
+  return (
+    <>
+      <div className="insp-section">
+        <div className="tip-card"><Layers size={18} color="var(--accent)" style={{ flex: 'none' }} /><div>Корректирующий слой меняет цвет и эффекты всего, что лежит под ним на таймлайне. Растяните его на нужный кусок ролика, а настройки поменяйте на вкладках «Цвет» и «Эффекты».</div></div>
+        <Slider label="Сила" value={clip.transform.opacity} min={0} max={1} step={0.01} def={1} format={v => Math.round(v * 100) + '%'} onChange={v => up({ keys: [], transform: { opacity: v } }, 'Сила корректирующего слоя')} hint="Насколько сильно слой меняет картинку под собой" />
+        <Slider label="Плавное появление" value={clip.fadeIn} min={0} max={3} step={0.05} def={0} unit=" с" onChange={v => up({ fadeIn: v }, 'Плавное появление')} />
+        <Slider label="Плавное исчезновение" value={clip.fadeOut} min={0} max={3} step={0.05} def={0} unit=" с" onChange={v => up({ fadeOut: v }, 'Плавное исчезновение')} />
+      </div>
+      <div className="insp-section" style={{ borderBottom: 0 }}>
+        <div className="row wrap">
+          <button className="btn small" onClick={() => A.duplicateClips([clip.id])}>Дублировать</button>
+          <button className="btn small danger" onClick={() => A.deleteClips([clip.id])}><Trash2 size={13} /> Удалить</button>
+        </div>
+        <div className="small-text muted">LUT и цветовые круги корректирующего слоя видны в готовом видео; остальное — сразу в окне просмотра.</div>
+      </div>
+    </>
+  );
+}
+
+function BlendSection({ clip, up }: { clip: MediaClip; up: Up }) {
+  const cur = clip.blend || 'normal';
+  return (
+    <div className="insp-section">
+      <h4><Layers size={14} /> Режим наложения</h4>
+      <div className="row wrap" style={{ gap: 5 }}>
+        {BLEND_MODES.map(b => (
+          <button key={b.id} className="chip" data-tip={b.tip} onClick={() => up({ blend: b.id === 'normal' ? undefined : b.id }, `Наложение «${b.label}»`, '')}
+            style={cur === b.id ? { borderColor: 'var(--accent)', color: 'var(--text)', background: 'var(--accent-soft)' } : undefined}>{b.label}</button>
+        ))}
+      </div>
+      <div className="small-text muted">Попробуйте «Экран» для бликов и огня на чёрном фоне, «Умножение» — для текстуры бумаги.</div>
+    </div>
+  );
+}
+
+function CropSection({ clip, up }: { clip: MediaClip; up: Up }) {
+  const cr = clip.crop || NO_CROP;
+  const set = (patch: Partial<typeof cr>) => {
+    const next = { ...cr, ...patch };
+    up({ crop: next.l || next.r || next.t || next.b ? next : undefined }, 'Обрезка кадра');
+  };
+  const pct = (v: number) => Math.round(v * 100) + '%';
+  return (
+    <div className="insp-section">
+      <h4><CropIcon size={14} /> Обрезка и форма</h4>
+      <div className="row wrap" style={{ gap: 5 }}>
+        {MASKS.map(mk => (
+          <button key={mk.id} className="chip" data-tip={mk.tip} onClick={() => up({ mask: mk.id === 'none' ? undefined : mk.id }, mk.id === 'none' ? 'Форма: прямоугольник' : `Форма «${mk.label}»`, '')}
+            style={(clip.mask || 'none') === mk.id ? { borderColor: 'var(--accent)', color: 'var(--text)', background: 'var(--accent-soft)' } : undefined}>{mk.label}</button>
+        ))}
+      </div>
+      <div className="crop-grid">
+        <Slider label="Слева" value={cr.l} min={0} max={0.45} step={0.005} def={0} format={pct} onChange={v => set({ l: v })} />
+        <Slider label="Справа" value={cr.r} min={0} max={0.45} step={0.005} def={0} format={pct} onChange={v => set({ r: v })} />
+        <Slider label="Сверху" value={cr.t} min={0} max={0.45} step={0.005} def={0} format={pct} onChange={v => set({ t: v })} />
+        <Slider label="Снизу" value={cr.b} min={0} max={0.45} step={0.005} def={0} format={pct} onChange={v => set({ b: v })} />
+      </div>
+      {(clip.crop || clip.mask) && <button className="btn small ghost" onClick={() => up({ crop: undefined, mask: undefined }, 'Обрезка убрана', '')}><RotateCcw size={13} /> Без обрезки</button>}
+    </div>
+  );
+}
+
+function WheelsSection({ clip, up }: { clip: MediaClip; up: Up }) {
+  const w = clip.color.wheels || defaultWheels();
+  const set = (part: 'shadows' | 'midtones' | 'highlights', v: { hue: number; amount: number }) => {
+    const next = { ...w, [part]: v };
+    up({ color: { wheels: hasWheels(next) ? next : undefined } }, 'Цветовые круги');
+  };
+  return (
+    <div className="insp-section">
+      <h4><Palette size={14} /> Цветовые круги</h4>
+      <div className="small-text muted">Тяните точку к нужному оттенку — отдельно для тёмных мест, середины и светлых. Например, тени в синеву, а света в тёплый — получится «кино». Двойной щелчок — сброс.</div>
+      <div className="wheels">
+        <ColorWheel label="Тени" value={w.shadows} onChange={v => set('shadows', v)} />
+        <ColorWheel label="Середина" value={w.midtones} onChange={v => set('midtones', v)} />
+        <ColorWheel label="Света" value={w.highlights} onChange={v => set('highlights', v)} />
+      </div>
+      <div className="row wrap" style={{ gap: 5 }}>
+        <button className="chip" onClick={() => up({ color: { wheels: { shadows: { hue: 200, amount: 0.45 }, midtones: { hue: 0, amount: 0 }, highlights: { hue: 35, amount: 0.35 } } } }, 'Круги «Кино»', '')}>Кино</button>
+        <button className="chip" onClick={() => up({ color: { wheels: { shadows: { hue: 330, amount: 0.25 }, midtones: { hue: 40, amount: 0.25 }, highlights: { hue: 55, amount: 0.3 } } } }, 'Круги «Закат»', '')}>Закат</button>
+        <button className="chip" onClick={() => up({ color: { wheels: { shadows: { hue: 160, amount: 0.3 }, midtones: { hue: 180, amount: 0.15 }, highlights: { hue: 60, amount: 0.15 } } } }, 'Круги «Мята»', '')}>Мята</button>
+        {hasWheels(clip.color.wheels) && <button className="btn small ghost" onClick={() => up({ color: { wheels: undefined } }, 'Круги сброшены', '')}><RotateCcw size={13} /> Сбросить</button>}
+      </div>
+    </div>
+  );
+}
+
+function FacesSection({ clip, up }: { clip: MediaClip; up: Up }) {
+  const busy = useStore(s => s.tasks.some(t => t.label.startsWith('Ищу лица')));
+  const f = clip.faces;
+  const found = f ? f.samples.filter(s => s.boxes.length).length : 0;
+  return (
+    <div className="card" style={{ gap: 8, marginTop: 6 }}>
+      <div className="row"><EyeOff size={15} color="var(--accent)" /><b>Размыть лица</b></div>
+      <div className="small-text muted">Нейросеть прямо на компьютере найдёт лица во всём клипе и размоет их. Удобно для обзоров на улице и роликов, где прохожие не давали согласия.</div>
+      {!f && <button className="btn small" disabled={busy} onClick={() => S.blurFaces(clip.id).catch(() => undefined)}><ScanFace size={13} /> Найти и размыть лица</button>}
+      {f && <>
+        <span className="small-text" style={{ color: found ? 'var(--good)' : 'var(--muted)' }}>{found ? `Лица найдены в ${Math.round((found / Math.max(1, f.samples.length)) * 100)}% клипа` : 'Лиц не нашлось'}</span>
+        <Slider label="Сила размытия" value={f.strength} min={0} max={1} step={0.05} def={0.6} format={v => Math.round(v * 100) + '%'} onChange={v => up({ faces: { ...f, strength: v } }, 'Сила размытия лиц')} />
+        <div className="row wrap">
+          <button className="btn small ghost" disabled={busy} onClick={() => S.blurFaces(clip.id).catch(() => undefined)}>Искать заново</button>
+          <button className="btn small ghost" onClick={() => up({ faces: undefined }, 'Размытие лиц убрано', '')}><X size={13} /> Убрать</button>
+        </div>
+      </>}
+    </div>
+  );
+}
+
+function EqSection({ clip, up }: { clip: MediaClip; up: Up }) {
+  const e = clip.eq || NO_EQ;
+  const set = (patch: Partial<typeof e>, label: string) => {
+    const next = { ...e, ...patch };
+    up({ eq: hasEq(next) ? next : undefined }, label);
+  };
+  const db = (v: number) => (v > 0 ? '+' : '') + v.toFixed(1) + ' дБ';
+  return (
+    <div className="card" style={{ gap: 8 }}>
+      <div className="row"><SlidersVertical size={15} color="var(--accent)" /><b>Эквалайзер</b></div>
+      <div className="row wrap" style={{ gap: 5 }}>
+        {EQ_PRESETS.map(pr => <button key={pr.id} className="chip" data-tip={pr.tip} onClick={() => up({ eq: hasEq(pr.eq) ? { ...pr.eq } : undefined }, `Звук «${pr.label}»`, '')}>{pr.label}</button>)}
+      </div>
+      <Slider label="Басы" value={e.low} min={-12} max={12} step={0.5} def={0} format={db} onChange={v => set({ low: v }, 'Басы')} />
+      <Slider label="Середина" value={e.mid} min={-12} max={12} step={0.5} def={0} format={db} onChange={v => set({ mid: v }, 'Середина')} hint="Здесь живёт голос" />
+      <Slider label="Верха" value={e.high} min={-12} max={12} step={0.5} def={0} format={db} onChange={v => set({ high: v }, 'Верха')} hint="Чёткость и «воздух», шипящие" />
+      <Slider label="Компрессор" value={e.comp} min={0} max={1} step={0.05} def={0} format={v => (v ? Math.round(v * 100) + '%' : 'нет')} onChange={v => set({ comp: v }, 'Компрессор')} hint="Делает тихие места громче, а громкие тише — звук ровнее" />
+      {hasEq(clip.eq) && (
+        <div className="row wrap" style={{ gap: 6 }}>
+          <span className="small-text muted"><Waves size={12} style={{ verticalAlign: -2 }} /> Слышно в готовом видео. Послушать:</span>
+          <button className="btn small ghost" onClick={() => S.listenClip(clip.id, false)}>до</button>
+          <button className="btn small" onClick={() => S.listenClip(clip.id, true)}>после</button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Ключевые кадры: ◆ ставит или убирает ключ под курсором, стрелки прыгают к соседним ключам
 function KeyBar({ clip, up }: { clip: MediaClip; up: Up }) {

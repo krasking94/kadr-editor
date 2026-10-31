@@ -131,3 +131,65 @@ export function cameraPath(samples: FaceSample[], deadZone = 0.06): { t: number;
   }
   return simplifyPath(pts, 0.004);
 }
+
+/** Все лица в кадре (рамки x, y, w, h в долях исходника) каждые step секунд исходника — для размытия */
+export async function faceBoxes(path: string, from: number, to: number, opts: { step?: number; onProgress?: (p: number) => void; signal?: AbortSignal } = {}): Promise<{ t: number; boxes: [number, number, number, number][] }[]> {
+  const det = await faceDetector();
+  const v = document.createElement('video');
+  v.muted = true;
+  v.preload = 'auto';
+  v.crossOrigin = 'anonymous';
+  v.src = mediaUrl(path);
+  await new Promise<void>((resolve, reject) => {
+    v.addEventListener('loadeddata', () => resolve(), { once: true });
+    v.addEventListener('error', () => reject(new Error('Видео не открылось')), { once: true });
+  });
+  const vw = v.videoWidth, vh = v.videoHeight;
+  const cw = 640, ch = Math.max(2, Math.round((cw * vh) / Math.max(1, vw)));
+  const canvas = document.createElement('canvas');
+  canvas.width = cw; canvas.height = ch;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  // мелкие лица прохожих ищем ещё и по кускам кадра 2×2 с перекрытием
+  const T = 384, tw = vw * 0.6, th = vh * 0.6;
+  const tile = document.createElement('canvas');
+  tile.width = T; tile.height = Math.max(2, Math.round((T * th) / Math.max(1, tw)));
+  const tctx = tile.getContext('2d', { willReadFrequently: true })!;
+  const step = opts.step ?? 0.25;
+  const out: { t: number; boxes: [number, number, number, number][] }[] = [];
+  const same = (a: number[], b: number[]) => {
+    const ix = Math.max(0, Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0]));
+    const iy = Math.max(0, Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[1], b[1]));
+    return ix * iy > 0.3 * Math.min(a[2] * a[3], b[2] * b[3]);
+  };
+  try {
+    for (let t = from; t <= to + 1e-3; t += step) {
+      if (opts.signal?.aborted) throw new Error('Отменено');
+      await seek(v, Math.min(t, Math.max(0, (v.duration || to) - 0.05)));
+      ctx.drawImage(v, 0, 0, cw, ch);
+      const found: [number, number, number, number][] = [];
+      for (const d of det.detect(canvas).detections) {
+        const b = d.boundingBox;
+        if (b) found.push([b.originX / cw, b.originY / ch, b.width / cw, b.height / ch]);
+      }
+      for (const [ox, oy] of [[0, 0], [0.4, 0], [0, 0.4], [0.4, 0.4]]) {
+        tctx.drawImage(v, ox * vw, oy * vh, tw, th, 0, 0, tile.width, tile.height);
+        for (const d of det.detect(tile).detections) {
+          const b = d.boundingBox;
+          if (!b) continue;
+          const box: [number, number, number, number] = [ox + (b.originX / tile.width) * 0.6, oy + (b.originY / tile.height) * 0.6, (b.width / tile.width) * 0.6, (b.height / tile.height) * 0.6];
+          if (!found.some(f => same(f, box))) found.push(box);
+        }
+      }
+      out.push({ t: Math.round(t * 1000) / 1000, boxes: found.map(b => b.map(x => Math.round(x * 1000) / 1000) as [number, number, number, number]) });
+      opts.onProgress?.((t - from) / Math.max(0.01, to - from));
+    }
+  } finally {
+    v.removeAttribute('src');
+    v.load();
+  }
+  // детектор иногда моргает: если лицо пропало на один образец, берём рамки соседей
+  for (let i = 1; i < out.length - 1; i++) {
+    if (!out[i].boxes.length && out[i - 1].boxes.length && out[i + 1].boxes.length) out[i] = { t: out[i].t, boxes: out[i - 1].boxes };
+  }
+  return out;
+}

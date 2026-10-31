@@ -1,7 +1,7 @@
 // Генерация картинок и звука. Готовые файлы складываются в «Документы/Хлопушка/Сгенерировано»,
 // а редактор сразу добавляет их в проект.
 import { app } from 'electron';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { imageProvider, type Aspect, type GenResult, type Voice } from '../shared/generators';
 import { getSecret, getSettings } from './settings';
@@ -155,4 +155,72 @@ export function generateMusic(prompt: string, duration = 30, instrumental = true
   if (!prompt.trim()) throw new Error('Опишите музыку');
   const ms = Math.round(Math.max(3, Math.min(300, duration)) * 1000);
   return elAudio('/v1/music', { prompt, music_length_ms: ms, force_instrumental: instrumental }, 'Музыка', prompt);
+}
+
+// ── ИИ-видео: fal.ai (Kling, Veo, Wan, Hailuo — любая модель по имени) ──
+// Видео снимается несколько минут, поэтому запрос ставится в очередь, а мы раз в несколько секунд спрашиваем, готово ли.
+const videoJobs = new Map<string, AbortController>();
+export const cancelVideo = (jobId: string) => videoJobs.get(jobId)?.abort();
+
+function durationFor(model: string, sec: number): string | number {
+  if (/veo/i.test(model)) return `${sec <= 4 ? 4 : sec <= 6 ? 6 : 8}s`;
+  if (/kling/i.test(model)) return sec > 7 ? '10' : '5';
+  if (/hailuo|minimax/i.test(model)) return sec > 8 ? '10' : '6';
+  return sec;
+}
+
+export async function generateVideo(jobId: string, prompt: string, o: { image?: string; aspect?: Aspect; duration?: number }, onStatus?: (text: string) => void): Promise<GenResult> {
+  if (!prompt.trim() && !o.image) throw new Error('Опишите, что должно происходить в ролике');
+  const s = getSettings();
+  const key = getSecret('fal');
+  if (!key) throw new Error('Для ИИ-видео нужен ключ fal.ai. Откройте Настройки → Картинки и звук.');
+  const model = (o.image ? s.gen.videoImageModel : s.gen.videoModel).replace(/^\/+|\/+$/g, '');
+  if (!model) throw new Error('Не указана модель ИИ-видео. Откройте Настройки → Картинки и звук.');
+  const body: Record<string, unknown> = { prompt: prompt.trim() || 'Gentle natural motion, cinematic camera movement', duration: durationFor(model, o.duration || s.gen.videoDuration || 5) };
+  const aspect = o.aspect && ['16:9', '9:16', '1:1'].includes(o.aspect) ? o.aspect : o.aspect === '3:4' ? '9:16' : '16:9';
+  if (!o.image) body.aspect_ratio = aspect;
+  if (o.image) {
+    // тип картинки — по первым байтам файла, а не по расширению
+    const buf = readFileSync(o.image);
+    const mime = buf[0] === 0x89 && buf[1] === 0x50 ? 'image/png' : buf.subarray(8, 12).toString() === 'WEBP' ? 'image/webp' : 'image/jpeg';
+    body.image_url = `data:${mime};base64,${buf.toString('base64')}`;
+  }
+  const ctrl = new AbortController();
+  videoJobs.set(jobId, ctrl);
+  const headers = { 'content-type': 'application/json', authorization: 'Key ' + key };
+  try {
+    const r = await fetch(`https://queue.fal.run/${model}`, { method: 'POST', headers, body: JSON.stringify(body), signal: ctrl.signal });
+    if (!r.ok) throw new Error(await failText(r, 'fal.ai'));
+    const q = await r.json();
+    const statusUrl: string = q.status_url || `https://queue.fal.run/${model}/requests/${q.request_id}/status`;
+    const resultUrl: string = q.response_url || `https://queue.fal.run/${model}/requests/${q.request_id}`;
+    const started = Date.now();
+    for (;;) {
+      await new Promise(res => setTimeout(res, 4000));
+      if (ctrl.signal.aborted) throw new Error('Отменено');
+      if (Date.now() - started > 20 * 60_000) throw new Error('fal.ai: видео не готово за 20 минут, попробуйте позже');
+      const st = await fetch(statusUrl, { headers, signal: ctrl.signal });
+      if (!st.ok) throw new Error(await failText(st, 'fal.ai'));
+      const j = await st.json();
+      const min = Math.floor((Date.now() - started) / 60000), sec = Math.floor(((Date.now() - started) / 1000) % 60);
+      const wait = `${min ? min + ' мин ' : ''}${sec} с`;
+      if (j.status === 'IN_QUEUE') onStatus?.(`в очереди${j.queue_position ? `, перед вами ${j.queue_position}` : ''} · ${wait}`);
+      else if (j.status === 'IN_PROGRESS') onStatus?.(`снимаю · ${wait}`);
+      else if (j.status === 'COMPLETED') break;
+      else if (j.status && j.status !== 'IN_QUEUE') throw new Error('fal.ai: ' + JSON.stringify(j).slice(0, 300));
+    }
+    const res = await fetch(resultUrl, { headers, signal: ctrl.signal });
+    if (!res.ok) throw new Error(await failText(res, 'fal.ai'));
+    const out = await res.json();
+    const url: string | undefined = out.video?.url || out.videos?.[0]?.url || out.output?.video?.url;
+    if (!url) throw new Error('fal.ai: сервис не вернул видео. ' + JSON.stringify(out).slice(0, 300));
+    const v = await fetch(url, { signal: ctrl.signal });
+    if (!v.ok) throw new Error(`Не удалось скачать видео (${v.status})`);
+    return save('Видео', prompt || 'оживлённое фото', /webm/.test(v.headers.get('content-type') || '') ? 'webm' : 'mp4', Buffer.from(await v.arrayBuffer()));
+  } catch (e) {
+    if (ctrl.signal.aborted) throw new Error('Отменено');
+    throw e;
+  } finally {
+    videoJobs.delete(jobId);
+  }
 }

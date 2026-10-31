@@ -163,3 +163,36 @@ export function MenuHost() {
 export function Kbd({ children }: { children: ReactNode }) {
   return <kbd>{children}</kbd>;
 }
+
+// Цветовой круг: точку тянут в сторону нужного оттенка, чем дальше от центра — тем сильнее.
+// Двойной щелчок возвращает в центр.
+export function ColorWheel(p: { label: string; value: { hue: number; amount: number }; onChange: (v: { hue: number; amount: number }) => void; tip?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const pick = (cx: number, cy: number) => {
+    const r = ref.current!.getBoundingClientRect();
+    const dx = cx - (r.left + r.width / 2), dy = cy - (r.top + r.height / 2);
+    let amount = Math.min(1, Math.hypot(dx, dy) / (r.width / 2));
+    if (amount < 0.04) amount = 0;
+    const hue = ((Math.atan2(-dy, dx) * 180) / Math.PI + 360) % 360;
+    p.onChange({ hue: Math.round(hue), amount: Math.round(amount * 100) / 100 });
+  };
+  const a = (p.value.hue * Math.PI) / 180;
+  const dot = { left: `${50 + Math.cos(a) * p.value.amount * 50}%`, top: `${50 - Math.sin(a) * p.value.amount * 50}%` };
+  return (
+    <div className="wheel-box" data-tip={p.tip}>
+      <div ref={ref} className="color-wheel"
+        onPointerDown={e => {
+          (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+          pick(e.clientX, e.clientY);
+          const move = (ev: PointerEvent) => pick(ev.clientX, ev.clientY);
+          const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', up);
+        }}
+        onDoubleClick={() => p.onChange({ hue: 0, amount: 0 })}>
+        <span className="wheel-dot" style={dot} />
+      </div>
+      <span className="small-text muted">{p.label}</span>
+    </div>
+  );
+}

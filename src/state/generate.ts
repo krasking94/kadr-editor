@@ -5,9 +5,9 @@ import { ASPECTS, type Aspect, type GenResult } from '../../shared/generators';
 import { projectDuration } from '../../shared/timeline';
 import type { MediaItem } from '../../shared/types';
 import * as A from './actions';
-import { endTask, get, startTask, toast } from './store';
+import { endTask, get, startTask, toast, updateTask } from './store';
 
-export type GenKind = 'image' | 'speech' | 'sfx' | 'music';
+export type GenKind = 'image' | 'speech' | 'sfx' | 'music' | 'video';
 
 export interface GenRequest {
   kind: GenKind;
@@ -21,6 +21,7 @@ export interface GenRequest {
   voiceId?: string;
   vocals?: boolean;
   volume?: number;
+  image?: string; // для ИИ-видео: оживить эту картинку
 }
 
 export interface GenOutcome { media: MediaItem; clipId: string | null; duration: number; path: string }
@@ -30,6 +31,7 @@ const LABEL: Record<GenKind, { task: string; done: string }> = {
   speech: { task: 'Озвучиваю текст', done: 'Озвучка готова' },
   sfx: { task: 'Создаю звук', done: 'Звук готов' },
   music: { task: 'Пишу музыку', done: 'Музыка готова' },
+  video: { task: 'Нейросеть снимает видео', done: 'Видео готово' },
 };
 
 export const cleanError = (e: unknown) => String((e as Error)?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -47,10 +49,15 @@ export async function generate(req: GenRequest, source = 'user'): Promise<GenOut
   const s = get();
   if (!s.project) throw new Error('Сначала откройте или создайте проект');
   const short = req.prompt.length > 40 ? req.prompt.slice(0, 40) + '…' : req.prompt;
-  const task = startTask(`${LABEL[req.kind].task}: «${short}»`);
+  const jobId = 'v' + Date.now();
+  const title = `${LABEL[req.kind].task}: «${short || 'оживляю фото'}»`;
+  const task = startTask(title, req.kind === 'video' ? () => api.genVideoCancel(jobId) : undefined);
+  const off = req.kind === 'video' ? api.onGenVideoStatus((ev: { jobId: string; text: string }) => { if (ev.jobId === jobId) updateTask(task, { label: `${title} · ${ev.text}` }); }) : null;
   let res: GenResult;
   try {
-    if (req.kind === 'image') {
+    if (req.kind === 'video') {
+      res = await api.genVideo(jobId, req.prompt, { image: req.image, aspect: req.aspect || projectAspect(), duration: req.duration });
+    } else if (req.kind === 'image') {
       const aspect = req.aspect || (s.settings.gen.imageAspect !== 'auto' ? s.settings.gen.imageAspect as Aspect : projectAspect());
       res = await api.genImage(req.prompt, aspect);
     } else if (req.kind === 'speech') res = await api.genSpeech(req.prompt, req.voiceId);
@@ -62,15 +69,18 @@ export async function generate(req: GenRequest, source = 'user'): Promise<GenOut
   } catch (e) {
     throw new Error(cleanError(e));
   } finally {
+    off?.();
     endTask(task);
   }
   const [media] = await A.importFiles([res.path], { source });
   if (!media) throw new Error('Файл создан, но не открылся: ' + res.path);
 
   let clipId: string | null = null;
-  const place = req.place ?? (req.kind === 'image' ? 'main' : 'audio');
+  const place = req.place ?? (req.kind === 'image' || req.kind === 'video' ? 'main' : 'audio');
   if (place !== 'none') {
-    if (media.kind === 'image') {
+    if (media.kind === 'video') {
+      clipId = A.addToTimeline(media.id, place === 'overlay' ? 'overlay' : 'main', { index: req.index, start: req.start, source, patch: place === 'main' ? { fit: 'fill' } : {}, label: `ИИ-видео «${short || 'оживлённое фото'}»` });
+    } else if (media.kind === 'image') {
       const dur = Math.max(0.5, req.duration ?? 4);
       const onMain = place === 'main';
       const zoom = req.animate ?? onMain;
@@ -90,4 +100,21 @@ export async function generate(req: GenRequest, source = 'user'): Promise<GenOut
   }
   if (source === 'user') toast('success', LABEL[req.kind].done, { detail: clipId ? 'Уже на таймлайне. Отменить — Ctrl+Z' : 'Лежит в медиатеке' });
   return { media, clipId, duration: media.kind === 'image' ? (req.duration ?? 4) : media.duration, path: res.path };
+}
+
+/** Картинка для «оживить фото»: выбранное фото на таймлайне или текущий кадр ролика */
+export async function videoSourceImage(): Promise<{ path: string; label: string } | null> {
+  const s = get();
+  const p = s.project!;
+  for (const id of s.selection) {
+    for (const t of p.tracks) for (const c of t.clips) {
+      if (c.id !== id || c.type !== 'media') continue;
+      const m = p.media.find(x => x.id === c.mediaId);
+      if (m?.kind === 'image' && !m.missing) return { path: m.path, label: m.name };
+    }
+  }
+  if (projectDuration(p) <= 0) return null;
+  const b64 = await A.renderFrame(s.playhead, 1280);
+  const path = await api.saveImage('data:image/jpeg;base64,' + b64, `Кадр для ИИ-видео ${Date.now()}`);
+  return { path, label: 'кадр под курсором' };
 }
