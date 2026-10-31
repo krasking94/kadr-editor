@@ -46,7 +46,7 @@ function editPoints(): number[] {
 }
 
 function zoomBy(k: number) {
-  set(s => ({ zoom: Math.max(4, Math.min(600, s.zoom * k)) }));
+  set(s => ({ zoom: A.clampZoom(s.zoom * k) }));
 }
 
 export const COMMANDS: Command[] = [
@@ -177,7 +177,8 @@ export const COMMANDS: Command[] = [
   { id: 'theme', label: 'Сменить тему (тёмная / светлая)', group: 'Окно', run: () => {
     saveSettings({ theme: document.documentElement.dataset.theme === 'light' ? 'dark' : 'light' });
   } },
-  { id: 'shortcuts', label: 'Горячие клавиши', group: 'Помощь', keys: ['F1', 'Shift+/'], run: () => set({ dialog: 'shortcuts' }) },
+  { id: 'help', label: 'Справка: как что сделать', group: 'Помощь', keys: ['F1'], run: () => set({ dialog: 'help' }) },
+  { id: 'shortcuts', label: 'Горячие клавиши', group: 'Помощь', keys: ['Shift+/'], run: () => set({ dialog: 'shortcuts' }) },
   { id: 'devtools', label: 'Инструменты разработчика', group: 'Помощь', keys: ['Ctrl+Shift+I'], run: () => api.devtools() },
   { id: 'site', label: 'Страница программы на GitHub', group: 'Помощь', run: () => api.openExternal('https://github.com/krasking94/kadr-editor') },
   { id: 'reports', label: 'Отчёты об ошибках', group: 'Помощь', run: () => set({ dialog: 'settings', settingsTab: 'reports' }) },

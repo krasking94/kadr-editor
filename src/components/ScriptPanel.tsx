@@ -24,7 +24,9 @@ function useSpeechReady() {
   const settings = useStore(s => s.settings);
   const secrets = useStore(s => s.secrets);
   const sp = providerPreset(settings.ai.speechProvider);
-  return { ok: !sp.needsKey || !!secrets[sp.id], label: sp.label };
+  // без ключа речь распознаётся нейросетью на компьютере, так что распознавать можно всегда
+  const local = settings.ai.speechProvider === 'local' || (sp.needsKey && !secrets[sp.id]);
+  return { ok: true, local, label: local ? 'на компьютере, без интернета' : sp.label };
 }
 
 function TranscribeCard({ text }: { text: string }) {
@@ -33,7 +35,7 @@ function TranscribeCard({ text }: { text: string }) {
   return (
     <div className="card">
       <div className="small-text muted">{text}</div>
-      {!speech.ok && <div className="small-text" style={{ color: 'var(--warn)' }}>Нужен ключ для распознавания речи ({speech.label}). <a style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => set({ dialog: 'settings', settingsTab: 'ai' })}>Вставить ключ</a></div>}
+      <div className="small-text muted">Речь распознаётся {speech.local ? 'нейросетью на компьютере — без интернета и бесплатно' : `через ${speech.label}`}. <a style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => set({ dialog: 'settings', settingsTab: 'ai' })}>Изменить</a></div>
       <button className="btn primary" disabled={!!busy} onClick={() => SC.ensureTranscripts()}>
         {busy ? <><Loader2 size={14} className="spin" /> {busy.label}{busy.progress ? ` · ${Math.round(busy.progress * 100)}%` : ''}</> : <><ScrollText size={14} /> Распознать речь</>}
       </button>

@@ -22,6 +22,7 @@ import { addTextOnObject, attachToObject, blurObject, trackClip } from './track'
 import { fixIssue, runPreflight } from './preflight';
 import { runDraft } from './draft';
 import { usePublish } from './publish';
+import { separateVoice } from './local-ai';
 
 export interface ToolOutput { text: string; image?: string; isError?: boolean }
 
@@ -362,6 +363,11 @@ export async function execTool(name: string, a: any, source: string): Promise<To
       const ids = Array.isArray(a.media_ids) && a.media_ids.length ? a.media_ids.map(String) : p.media.filter(m => m.kind !== 'audio').map(m => m.id);
       const plan = await runDraft({ mediaIds: ids, request: String(a.request || ''), target: Number(a.target) || 60, format: a.format || 'project', subtitles: a.subtitles !== false, title: a.title !== false, musicId: a.music_id, replace: a.replace ?? false, source });
       return plan ? ok('Draft built', { title: plan.title, pieces: plan.pieces.length, duration: r2(projectDuration(get().project!)) }) : { text: 'Could not build a draft', isError: true };
+    }
+    case 'separate_voice': {
+      const mode = ['both', 'voice', 'music'].includes(a.mode) ? a.mode : 'both';
+      const ids = await separateVoice(String(a.clip_id), mode, a.quality === 'fast' ? 'fast' : a.quality === 'best' ? 'best' : undefined, source);
+      return ids.length ? ok('Voice separated', { new_clip_ids: ids }) : { text: 'The user declined to download the model', isError: true };
     }
     case 'open_publish': {
       set({ dialog: 'publish' });

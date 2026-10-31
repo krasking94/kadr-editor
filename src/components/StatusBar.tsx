@@ -64,7 +64,7 @@ export function StatusBar() {
       {info && !info.ffmpeg.ok && <div className="item" style={{ color: 'var(--bad)' }}>FFmpeg не найден</div>}
       <div className="item">{project.width}×{project.height} · {project.fps} кадр/с</div>
       <div className="item mono">{formatTime(projectDuration(project))}</div>
-      <div className="item">масштаб {Math.round(zoom)} px/с</div>
+      <div className="item">масштаб {zoom < 10 ? zoom.toFixed(zoom < 1 ? 2 : 1).replace(".", ",") : Math.round(zoom)} px/с</div>
       <div className="item" style={{ cursor: 'pointer' }} onClick={() => set({ dialog: 'settings', settingsTab: 'mcp' })}
         data-tip={mcp?.running ? `Внешний ИИ может подключиться по адресу\nhttp://127.0.0.1:${mcp.port}/mcp${mcp.lastClient ? '\nПоследний: ' + mcp.lastClient : ''}` : mcp?.error || 'MCP-сервер выключен'} data-tip-pos="top">
         <span className={'dot' + (mcp?.running ? ' on' : mcp?.error ? ' bad' : '')} /> MCP {mcp?.running ? mcp.port : 'выкл'}

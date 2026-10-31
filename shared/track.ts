@@ -146,7 +146,7 @@ const findMedia = (p: Project, id: string): MediaClip | null => {
  */
 export function resolveFollows(p: Project, step = 1 / 15): void {
   for (const t of p.tracks) for (const c of t.clips) {
-    if (!c.follow) continue;
+    if (!c.follow || c.follow.baked) continue;
     const src = findMedia(p, c.follow.clipId);
     if (!src || src.id === c.id || !src.track?.samples.length) { if (c.type === 'text') delete c.path; continue; }
     const dur = clipDuration(c as Clip);

@@ -9,6 +9,7 @@ import { callEditor, notify, type ToolOutput } from './bridge';
 import { externalTools } from './mcp';
 import { dropPhantoms, levels, punctuate } from '../shared/speech';
 import { pcm } from './ffmpeg';
+import { localTranscribe } from './local-ai';
 
 interface Session {
   provider: string;
@@ -258,8 +259,17 @@ export interface Segment { start: number; end: number; text: string; words?: { s
 const FILLER_PROMPT = 'Эээ, ну, ммм… короче, как бы, это самое. Хм, ну вот.';
 
 // Распознавание речи через OpenAI-совместимый сервис (OpenAI Whisper, Groq и др.)
-export async function transcribeFile(path: string, language?: string, fillers = false): Promise<Segment[]> {
+/** Распознавать ли речь на компьютере: так выбрано в настройках или у выбранного сервиса нет ключа */
+export function speechIsLocal(): boolean {
   const s = getSettings();
+  if (s.ai.speechProvider === 'local') return true;
+  const preset = providerPreset(s.ai.speechProvider);
+  return preset.needsKey && !getSecret(preset.id);
+}
+
+export async function transcribeFile(path: string, language?: string, fillers = false, onProgress?: (p: number) => void, signal?: AbortSignal): Promise<Segment[]> {
+  const s = getSettings();
+  if (speechIsLocal()) return localTranscribe(path, language || s.ai.speechLanguage, onProgress, signal);
   const preset = providerPreset(s.ai.speechProvider);
   const saved = s.ai.providers[preset.id] || {};
   const url = (saved.baseUrl || preset.baseUrl).replace(/\/+$/, '') + '/audio/transcriptions';

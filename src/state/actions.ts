@@ -10,6 +10,7 @@ import { renderTextPngs } from '../lib/text-render';
 import { autoProxies, checkProxies } from './media-tools';
 import { loadFonts } from '../lib/fonts';
 import { faceMaskRenders } from './studio';
+import { ensureSpeech } from './local-ai';
 import { askConfirm, commit, endTask, get, patchMediaCache, set, startTask, toast, updateTask, type QueueItem } from './store';
 
 const deepMerge = <T extends object>(base: T, patch: Partial<T> | undefined): T => ({ ...base, ...(patch || {}) });
@@ -42,6 +43,23 @@ export async function openProjectFile(path?: string) {
     toast('success', `Проект «${project.name}» открыт`);
   } catch (e) {
     toast('error', 'Не удалось открыть проект', { detail: String((e as Error).message || e) });
+  }
+}
+
+export interface AutosaveInfo { id: string; name: string; savedAt: number; savedPath: string | null; file: string }
+
+/** Открыть автосохранённую копию (после сбоя или если проект закрыли без сохранения) */
+export async function restoreAutosave(a: AutosaveInfo): Promise<boolean> {
+  if (!(await confirmDiscard())) return false;
+  try {
+    const d = await api.readAutosave(a.file);
+    for (const m of d.project.media) m.missing = !(await api.exists(m.path));
+    await loadProject(d.project, d.savedPath, true);
+    toast('success', `Работа «${a.name}» восстановлена`, { detail: 'Не забудьте сохранить проект (Ctrl+S).' });
+    return true;
+  } catch (e) {
+    toast('error', 'Не удалось восстановить', { detail: String((e as Error)?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') });
+    return false;
   }
 }
 
@@ -203,7 +221,7 @@ export function deleteTrack(id: string) {
   commit(`Дорожка «${t.name}» удалена`, p => { p.tracks = p.tracks.filter(x => x.id !== id); });
 }
 
-function trackFor(p: Project, kind: TrackKind, start: number, dur: number): Track {
+export function trackFor(p: Project, kind: TrackKind, start: number, dur: number): Track {
   // ищем дорожку нужного вида, где на этом месте свободно, иначе создаём новую
   const free = p.tracks.find(t => t.kind === kind && !t.locked && t.clips.every(c => clipEnd(c) <= start + 1e-3 || c.start >= start + dur - 1e-3));
   return free || addTrack(p, kind);
@@ -225,6 +243,7 @@ export function addToTimeline(mediaId: string, where: 'main' | 'overlay' | 'audi
   }
   if (o.patch) Object.assign(clip, o.patch);
   const label = o.label || (where === 'main' ? `«${m.name}» на основной дорожке` : where === 'overlay' ? `«${m.name}» поверх видео` : `«${m.name}» на звуковой дорожке`);
+  const wasEmpty = !p0.tracks.some(t => t.clips.length);
   commit(label, p => {
     if (where === 'main') {
       const t = mainTrack(p);
@@ -240,6 +259,8 @@ export function addToTimeline(mediaId: string, where: 'main' | 'overlay' | 'audi
     return [clip.id];
   }, { source: o.source });
   set({ selection: [clip.id] });
+  // первый клип или ИИ дописал ролик дальше видимой части — показываем весь ролик
+  if (wasEmpty || (o.source && projectDuration(get().project!) * get().zoom > (document.querySelector('.tl-scroll')?.clientWidth ?? 1000) - 40)) fitZoom();
   return clip.id;
 }
 
@@ -805,28 +826,37 @@ export async function transcribeProject(o: { clipId?: string; addSubs?: boolean;
     const f = findClip(p, o.clipId);
     if (f) range = { start: f.clip.start, end: clipEnd(f.clip) };
   }
-  const task = startTask(o.label || 'Распознаю речь');
+  if (!(await ensureSpeech(o.language))) throw new Error('Отменено');
+  const jobId = 'tp' + Date.now();
+  const task = startTask(o.label || 'Распознаю речь', () => api.transcribeMediaCancel(jobId));
+  const off = api.onTranscribeProgress((ev: { jobId: string; progress: number }) => { if (ev.jobId === jobId) updateTask(task, { progress: ev.progress }); });
   try {
-    const segs: Segment[] = await api.transcribe(p, range, o.language, !!o.fillers);
+    const segs: Segment[] = await api.transcribe(p, range, o.language, !!o.fillers, jobId);
     if (o.addSubs !== false && segs.length) addSubtitles(segs, !o.clipId, {}, o.source);
     if (!segs.length) toast('info', 'Речь не найдена');
     return segs;
   } catch (e) {
-    toast('error', 'Не удалось распознать речь', { detail: String((e as Error).message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') });
+    const msg = String((e as Error).message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+    if (msg !== 'Отменено') toast('error', 'Не удалось распознать речь', { detail: msg.replace(/\s*\[MODEL:[\w-]+\]/, '') });
     throw e;
   } finally {
+    off();
     endTask(task);
   }
 }
 
 // ── Масштаб таймлайна ────────────────────────────────
+// пикселей на секунду: от «час в одном экране» до отдельных кадров
+export const ZOOM_MIN = 0.25, ZOOM_MAX = 600;
+export const clampZoom = (z: number) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+
 export function fitZoom() {
   const p = get().project;
   if (!p) return;
   const dur = Math.max(5, projectDuration(p) * 1.05);
   const el = document.querySelector('.tl-scroll') as HTMLElement | null;
   const width = Math.max(300, (el?.clientWidth ?? window.innerWidth - 700) - 40);
-  set({ zoom: Math.max(4, Math.min(400, width / dur)) });
+  set({ zoom: clampZoom(Math.min(400, width / dur)) });
   if (el) el.scrollLeft = 0;
 }
 

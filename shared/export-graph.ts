@@ -15,6 +15,45 @@ export interface ExportPlan {
 export interface ExportExtras {
   tempDir?: string; // папка для служебных файлов (список картинок субтитров)
   blank?: string; // прозрачная картинка размером с кадр — пауза между субтитрами
+  // Кусок длинного ролика (сохранение по частям): ровно frames кадров видео в opts.outPath
+  // и звук без сжатия (s16le, 48 кГц, стерео) ровно той же длины в audioOut. Громкость выравнивается потом, на всём ролике.
+  part?: { frames: number; audioOut: string };
+}
+
+export const PCM_RATE = 48000;
+
+/** Выравнивание громкости под площадки (EBU R128) или просто защита от перегруза */
+export function levelFilter(opts: Pick<ExportOptions, 'loudness'>): string {
+  return opts.loudness ? `loudnorm=I=${n(Math.max(-30, Math.min(-8, opts.loudness)), 1)}:TP=-1.5:LRA=11,aresample=${PCM_RATE}` : 'alimiter=limit=0.97';
+}
+
+/** Чем сжимать видео и звук для выбранного формата */
+export function codecArgs(opts: Pick<ExportOptions, 'format' | 'quality' | 'encoder'>): { video: string[]; audio: string[]; tail: string[] } {
+  const crf = { draft: 28, good: 21, best: 17 }[opts.quality];
+  switch (opts.format) {
+    case 'mp4':
+    case 'mov': {
+      const enc = opts.encoder;
+      const video = enc === 'nvenc' ? ['-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', String(crf + 2), '-b:v', '0']
+        : enc === 'qsv' ? ['-c:v', 'h264_qsv', '-global_quality', String(crf + 2)]
+          : enc === 'amf' ? ['-c:v', 'h264_amf', '-rc', 'cqp', '-qp_i', String(crf), '-qp_p', String(crf + 2)]
+            : ['-c:v', 'libx264', '-preset', opts.quality === 'draft' ? 'veryfast' : opts.quality === 'best' ? 'slow' : 'medium', '-crf', String(crf)];
+      return { video: [...video, '-pix_fmt', 'yuv420p'], audio: ['-c:a', 'aac', '-b:a', opts.quality === 'draft' ? '128k' : '192k'], tail: opts.format === 'mp4' ? ['-movflags', '+faststart'] : [] };
+    }
+    case 'webm':
+      return {
+        video: ['-c:v', 'libvpx-vp9', '-crf', String(crf + 10), '-b:v', '0', '-row-mt', '1', '-deadline', opts.quality === 'best' ? 'good' : 'realtime', '-cpu-used', opts.quality === 'best' ? '2' : '5'],
+        audio: ['-c:a', 'libopus', '-b:a', '160k'], tail: [],
+      };
+    case 'gif':
+      return { video: [], audio: [], tail: ['-loop', '0'] };
+    case 'png':
+      return { video: [], audio: [], tail: ['-frames:v', '1', '-update', '1'] };
+    case 'mp3':
+      return { video: [], audio: ['-c:a', 'libmp3lame', '-b:a', opts.quality === 'draft' ? '128k' : '256k'], tail: [] };
+    case 'wav':
+      return { video: [], audio: ['-c:a', 'pcm_s16le'], tail: [] };
+  }
 }
 
 const n = (v: number, d = 4) => {
@@ -521,7 +560,7 @@ export function buildExportArgs(
   }
   const aFinal = L('x');
   // Выравнивание громкости под площадки (EBU R128) или просто защита от перегруза
-  const level = opts.loudness ? `loudnorm=I=${n(Math.max(-30, Math.min(-8, opts.loudness)), 1)}:TP=-1.5:LRA=11,aresample=48000` : 'alimiter=limit=0.97';
+  const level = extras.part ? 'anull' : levelFilter(opts);
   graph.push(`[${aAcc}]apad=whole_dur=${n(total)},atrim=duration=${n(total)},${level}[${aFinal}]`);
   aAcc = aFinal;
 
@@ -542,6 +581,7 @@ export function buildExportArgs(
     const v = L('v');
     const vf: string[] = [];
     if (ranged) vf.push(`trim=start=${n(start)}:end=${n(end)}`, 'setpts=PTS-STARTPTS');
+    if (extras.part) vf.push('tpad=stop_mode=clone:stop=3'); // ровно frames кадров: недостающий кадр повторяем
     const ow = even(opts.width || W), oh = even(opts.height || H);
     if (opts.format === 'gif') {
       const gw = Math.min(ow, 640);
@@ -562,41 +602,28 @@ export function buildExportArgs(
     aAcc = a;
   }
 
+  if (extras.part) {
+    // звук части — ровно столько отсчётов, сколько длится её видео: тогда куски стыкуются без щелчков и сдвига
+    const samples = Math.round(extras.part.frames * PCM_RATE / (opts.fps || fps));
+    const a = L('x');
+    graph.push(`[${aAcc}]aresample=${PCM_RATE},aformat=sample_fmts=s16:channel_layouts=stereo,apad=whole_len=${samples},atrim=end_sample=${samples}[${a}]`);
+    aAcc = a;
+  }
+
   if (opts.format === 'gif' || opts.format === 'png') graph.push(`[${aAcc}]anullsink`);
   const args: string[] = ['-hide_banner', '-y', '-nostdin', '-progress', 'pipe:1', '-nostats', ...inputs];
   args.push('-filter_complex', graph.join(';'));
+  if (extras.part) {
+    const c = codecArgs(opts);
+    if (!audioOnly) args.push('-map', `[${vAcc}]`, ...c.video, '-frames:v', String(extras.part.frames), '-an', opts.outPath);
+    args.push('-map', `[${aAcc}]`, '-c:a', 'pcm_s16le', '-f', 's16le', '-ar', String(PCM_RATE), '-ac', '2', extras.part.audioOut);
+    return { args, duration: extras.part.frames / (opts.fps || fps), files };
+  }
   if (!audioOnly) args.push('-map', `[${vAcc}]`);
   if (opts.format !== 'gif' && opts.format !== 'png') args.push('-map', `[${aAcc}]`);
 
-  const crf = { draft: 28, good: 21, best: 17 }[opts.quality];
-  switch (opts.format) {
-    case 'mp4':
-    case 'mov': {
-      const enc = opts.encoder;
-      if (enc === 'nvenc') args.push('-c:v', 'h264_nvenc', '-preset', 'p5', '-rc', 'vbr', '-cq', String(crf + 2), '-b:v', '0');
-      else if (enc === 'qsv') args.push('-c:v', 'h264_qsv', '-global_quality', String(crf + 2));
-      else if (enc === 'amf') args.push('-c:v', 'h264_amf', '-rc', 'cqp', '-qp_i', String(crf), '-qp_p', String(crf + 2));
-      else args.push('-c:v', 'libx264', '-preset', opts.quality === 'draft' ? 'veryfast' : opts.quality === 'best' ? 'slow' : 'medium', '-crf', String(crf));
-      args.push('-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', opts.quality === 'draft' ? '128k' : '192k');
-      if (opts.format === 'mp4') args.push('-movflags', '+faststart');
-      break;
-    }
-    case 'webm':
-      args.push('-c:v', 'libvpx-vp9', '-crf', String(crf + 10), '-b:v', '0', '-row-mt', '1', '-deadline', opts.quality === 'best' ? 'good' : 'realtime', '-cpu-used', opts.quality === 'best' ? '2' : '5', '-c:a', 'libopus', '-b:a', '160k');
-      break;
-    case 'gif':
-      args.push('-loop', '0');
-      break;
-    case 'png':
-      args.push('-frames:v', '1', '-update', '1');
-      break;
-    case 'mp3':
-      args.push('-c:a', 'libmp3lame', '-b:a', opts.quality === 'draft' ? '128k' : '256k');
-      break;
-    case 'wav':
-      args.push('-c:a', 'pcm_s16le');
-      break;
-  }
+  const codec = codecArgs(opts);
+  args.push(...codec.video, ...codec.audio, ...codec.tail);
   args.push('-t', n(outDur), opts.outPath);
   return { args, duration: outDur, files };
 }

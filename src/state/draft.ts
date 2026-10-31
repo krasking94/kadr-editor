@@ -12,6 +12,7 @@ import { addTrack, BLOGGER_STYLE, setProjectFormat } from './actions';
 import { aiReady } from './script';
 import { fitMusic } from './studio';
 import { HIGHLIGHTS } from './smart';
+import { ensureSpeech } from './local-ai';
 
 const clean = (e: unknown) => String((e as Error)?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
@@ -36,6 +37,7 @@ export function cancelDraft() { cancelled = true; }
 /** Распознать речь у файлов, где её ещё нет. Без ключа распознавания — просто пропускаем. */
 async function ensureWords(list: MediaItem[]): Promise<boolean> {
   let any = false;
+  if (list.some(m => !m.transcript && m.hasAudio && m.kind === 'video') && !(await ensureSpeech())) return list.some(m => !!m.transcript?.words.length);
   for (const [i, m] of list.entries()) {
     if (cancelled) throw new Error('Отменено');
     if (m.transcript || !m.hasAudio || m.kind !== 'video') { any = any || !!m.transcript?.words.length; continue; }
@@ -50,7 +52,7 @@ async function ensureWords(list: MediaItem[]): Promise<boolean> {
     } catch (e) {
       const msg = clean(e);
       if (msg === 'Отменено') throw e;
-      toast('warn', 'Речь не распознана — соберу по картинке', { detail: msg, ttl: 8000 });
+      toast('warn', 'Речь не распознана — соберу по картинке', { detail: msg.replace(/\s*\[MODEL:[\w-]+\]/, ''), ttl: 8000 });
       return any;
     } finally {
       off();

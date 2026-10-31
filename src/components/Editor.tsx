@@ -66,6 +66,12 @@ export function Editor() {
     const t = setTimeout(startTour, 900);
     return () => clearTimeout(t);
   }, [needTour]);
+  // справка и команды могут открыть нужную вкладку слева
+  useEffect(() => {
+    const h = (e: Event) => { setTab((e as CustomEvent<RailTab>).detail); setPanelOpen(true); };
+    window.addEventListener('hl:rail', h);
+    return () => window.removeEventListener('hl:rail', h);
+  }, []);
   useEffect(() => {
     const h = () => setSize({ w: window.innerWidth, h: window.innerHeight });
     window.addEventListener('resize', h);

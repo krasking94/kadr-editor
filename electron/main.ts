@@ -5,14 +5,18 @@ import { tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import type { ExportOptions, Project } from '../shared/types';
+import type { ExportOptions, Project, TextRender } from '../shared/types';
 import { buildExportArgs } from '../shared/export-graph';
+import { inputLoad, MAX_INPUTS, narrowToRange, PART_INPUTS, planParts, type ExportPart } from '../shared/export-parts';
+import { exportInParts } from './export-parts-run';
 import { projectDuration } from '../shared/timeline';
 import { FFMPEG, ffmpegAvailable, probe, thumbnails, waveform, detectSilence, detectScenes, hardwareEncoders, pcm, run } from './ffmpeg';
 import { getSettings, setSettings, setSecret, secretStatus } from './settings';
 import { attachWindow, notify } from './bridge';
-import { chat, complete, listModels, resetSession, stopAi, transcribeFile } from './ai';
-import { audioSnippet, bgCleanup, bgFinish, bgFrames, bgPrepare, bgWrite, cancelProcess, makeProxy, measureLoudness, processClip, type ProcessKind, type ProcessOpts } from './process';
+import { chat, complete, listModels, resetSession, speechIsLocal, stopAi, transcribeFile } from './ai';
+import { writeFileAtomic } from './safe-write';
+import { cancelDownload, cancelSeparate, deleteModel, downloadModel, localModelsInfo, localDeepTest, localSelfTest, localSeparate, localTranscribe, stopWorker } from './local-ai';
+import { audioSnippet, bgCleanup, bgFinish, bgFrames, bgPrepare, bgWrite, cancelProcess, makeProxy, measureLoudness, measureLoudnessFile, processClip, type ProcessKind, type ProcessOpts } from './process';
 import { envelope, findOffset } from '../shared/multicam';
 import { parseAnalysis } from '../shared/preflight';
 import { detectBeats } from '../shared/beats';
@@ -27,6 +31,8 @@ import { publish, publishLogout, publishStatus, telegramCheck, vkLogin, youtubeL
 // До версии 0.3 программа называлась «Кадр» (Kadr). Настройки, ключи нейросетей, список проектов
 // и автосохранения остаются в прежней папке, чтобы после обновления ничего не пропало.
 app.setPath('userData', join(app.getPath('appData'), 'Kadr'));
+// для проверки на сервере сборки: папка настроек с русскими буквами в пути, как у многих пользователей
+if (process.env.KADR_USER_DATA) app.setPath('userData', process.env.KADR_USER_DATA);
 
 const isDev = !!process.env.KADR_DEV_URL;
 let win: BrowserWindow | null = null;
@@ -118,17 +124,21 @@ function createWindow() {
 
 // Проверка собранной программы (запускается на сервере сборки): окно открылось, интерфейс нарисован, FFmpeg найден
 function smokeTest(w: BrowserWindow) {
-  const fail = setTimeout(() => { console.log('SMOKE FAIL: timeout'); app.exit(1); }, 60000);
+  const deep = process.env.KADR_SMOKE_ML === '1';
+  const fail = setTimeout(() => { console.log('SMOKE FAIL: timeout'); app.exit(1); }, deep ? 15 * 60000 : 60000);
   w.webContents.once('did-finish-load', async () => {
     await new Promise(r => setTimeout(r, 4000));
     const ui = await w.webContents.executeJavaScript(`!!document.querySelector('.welcome h1')`).catch(() => false);
     const ff = ffmpegAvailable();
     const mcp = mcpServerState();
     const bridge = await bridgeSelfTest(mcp.port).catch(e => ({ ok: false, error: String(e) }));
-    console.log('SMOKE', JSON.stringify({ ui, ffmpeg: ff, mcp, bridge }));
+    const ml = await localSelfTest();
+    // полная проверка нейросетей: скачать, распознать, разделить (только по просьбе сервера сборки)
+    const mlDeep = deep ? await localDeepTest() : { ok: true, steps: [] as string[] };
+    console.log('SMOKE', JSON.stringify({ ui, ffmpeg: ff, mcp, bridge, ml, mlDeep, userData: app.getPath('userData') }));
     clearTimeout(fail);
     allowClose = true;
-    app.exit(ui && ff.ok && bridge.ok ? 0 : 1);
+    app.exit(ui && ff.ok && bridge.ok && ml.ok && mlDeep.ok ? 0 : 1);
   });
 }
 
@@ -260,24 +270,26 @@ function addRecent(path: string, name: string) {
   setSettings({ recent });
 }
 ipcMain.handle('project:read', (_e, path: string) => {
-  const project = JSON.parse(readFileSync(path, 'utf8')) as Project;
+  let project: Project;
+  try {
+    project = JSON.parse(readFileSync(path, 'utf8')) as Project;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('Файл проекта не найден — возможно, его переместили или удалили.');
+    throw new Error('Файл проекта повреждён. Посмотрите на стартовом экране в «Последних» — там может быть автосохранённая копия.');
+  }
+  if (!project || !Array.isArray(project.media) || !Array.isArray(project.tracks)) throw new Error('Это не проект «Хлопушки» или файл повреждён.');
   for (const m of project.media) m.missing = !existsSync(m.path);
   addRecent(path, project.name);
   return project;
 });
 ipcMain.handle('project:write', (_e, path: string, project: Project) => {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = path + '.tmp';
-  writeFileSync(tmp, JSON.stringify(project, null, 1));
-  writeFileSync(path, readFileSync(tmp));
-  unlinkSync(tmp);
+  writeFileAtomic(path, JSON.stringify(project, null, 1));
   addRecent(path, project.name);
   return true;
 });
 const autosaveDir = () => join(app.getPath('userData'), 'autosave');
 ipcMain.handle('project:autosave', (_e, project: Project, savedPath: string | null) => {
-  mkdirSync(autosaveDir(), { recursive: true });
-  writeFileSync(join(autosaveDir(), project.id + '.kadr'), JSON.stringify({ savedPath, savedAt: Date.now(), project }));
+  writeFileAtomic(join(autosaveDir(), project.id + '.kadr'), JSON.stringify({ savedPath, savedAt: Date.now(), project }));
   return true;
 });
 ipcMain.handle('project:autosaves', () => {
@@ -408,7 +420,8 @@ function writeTexts(texts: TextPayload[], jobId: string) {
   return texts.map((t, i) => ({ clipId: t.clipId, from: t.from, to: t.to, path: dataUrlToFile(t.dataUrl, join(tempDir(), `${jobId}_t${i}.png`)) }));
 }
 
-async function runExport(jobId: string, project: Project, texts: TextPayload[], opts: ExportOptions, onProgress?: (p: number, speed: string) => void, transform?: (args: string[]) => string[]) {
+
+async function runExport(jobId: string, project: Project, texts: TextPayload[], opts: ExportOptions, onProgress?: (p: number, speed: string) => void, transform?: (args: string[]) => string[], finalAudio?: string[]) {
   const ctrl = new AbortController();
   jobs.set(jobId, ctrl);
   const textFiles = writeTexts(texts, jobId);
@@ -426,11 +439,23 @@ async function runExport(jobId: string, project: Project, texts: TextPayload[], 
     const hw = (opts.format === 'mp4' || opts.format === 'mov') ? await hardwareEncoders() : [];
     encoder = (hw[0] as ExportOptions['encoder']) || 'cpu';
   }
+  // Тяжёлый проект (сотни кусков) сохраняем по частям: иначе FFmpeg откроет все файлы разом
+  let renders: TextRender[] = textFiles;
+  const heavy = !transform && opts.format !== 'gif' && inputLoad(project, renders) > MAX_INPUTS;
+  let parts: ExportPart[] = [];
+  if (heavy && opts.format === 'png') {
+    // один кадр тяжёлого проекта: достаточно той части, где он лежит
+    const t = opts.rangeStart ?? 0;
+    const near = narrowToRange(project, renders, t, t + 1 / project.fps, PART_INPUTS);
+    if (near) { project = near.project; renders = near.texts; opts = { ...opts, rangeStart: t - near.offset }; }
+  } else if (heavy) parts = planParts(project, renders, PART_INPUTS);
   const attempt = async (enc: ExportOptions['encoder']) => {
-    const plan = buildExportArgs(project, textFiles, { ...opts, encoder: enc }, { tempDir: tempDir(), blank });
+    if (parts.length > 1) return exportInParts({ ffmpeg: FFMPEG, run, workDir: tempDir(), log }, project, renders, { ...opts, encoder: enc }, parts, blank, ctrl.signal, onProgress, finalAudio);
+    const plan = buildExportArgs(project, renders, { ...opts, encoder: enc }, { tempDir: tempDir(), blank });
     for (const f of plan.files) { writeFileSync(f.path, f.content); temp.push(f.path); }
     const started = Date.now();
-    const args = transform ? transform(plan.args) : plan.args;
+    let args = transform ? transform(plan.args) : plan.args;
+    if (finalAudio) args = [...args.slice(0, -3), ...finalAudio, ...args.slice(-3)]; // перед «-t длина файл»
     // для разработчика: KADR_DEBUG=1 сохраняет команду FFmpeg рядом с временными файлами
     if (process.env.KADR_DEBUG) writeFileSync(join(tempDir(), `ffmpeg-${jobId}.json`), JSON.stringify(args, null, 1));
     const r = await run(FFMPEG, args, {
@@ -489,22 +514,26 @@ ipcMain.handle('render:frame', async (_e, project: Project, texts, time: number,
   return b64;
 });
 
-// Распознавание речи: сводим звук проекта и отправляем в сервис
-ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: number; end: number }, language?: string, fillers?: boolean) => {
-  const id = 's' + Date.now();
+// Распознавание речи: сводим звук проекта и отправляем в сервис (или нейросети на компьютере)
+const transcribeJobs = new Map<string, AbortController>();
+ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: number; end: number }, language?: string, fillers?: boolean, jobId?: string) => {
+  const id = jobId || 's' + Date.now();
+  const ctrl = new AbortController();
+  transcribeJobs.set(id, ctrl);
   const out = join(tempDir(), id + '.mp3');
-  const plan = buildExportArgs(project, [], {
+  // звук проекта для распознавания: моно 16 кГц, маленький файл (у длинных роликов из сотен кусков — по частям)
+  const prep = runExport(id + 'a', project, [], {
     outPath: out, format: 'mp3', width: project.width, height: project.height, fps: project.fps, quality: 'draft', encoder: 'cpu',
     rangeStart: range?.start, rangeEnd: range?.end,
-  });
-  const args = [...plan.args];
-  const bi = args.indexOf('-b:a');
-  if (bi >= 0) args[bi + 1] = '48k';
-  args.splice(args.length - 1, 0, '-ac', '1', '-ar', '16000');
-  const r = await run(FFMPEG, args);
-  if (r.code !== 0) throw new Error('Не удалось подготовить звук: ' + lastError(r.stderr));
+  }, undefined, undefined, ['-b:a', '48k', '-ac', '1', '-ar', '16000']);
+  const stopPrep = () => jobs.get(id + 'a')?.abort();
+  ctrl.signal.addEventListener('abort', stopPrep);
+  const res = await prep;
+  ctrl.signal.removeEventListener('abort', stopPrep);
+  if (ctrl.signal.aborted || res.canceled) { transcribeJobs.delete(id); throw new Error('Отменено'); }
+  if (!res.ok) { transcribeJobs.delete(id); throw new Error('Не удалось подготовить звук: ' + res.error); }
   try {
-    const segs = await transcribeFile(out, language, !!fillers);
+    const segs = await transcribeFile(out, language, !!fillers, p => notify('ai:transcribe-progress', { jobId: id, progress: p }), ctrl.signal);
     const offset = range?.start || 0;
     const total = projectDuration(project);
     return segs.map(s => ({
@@ -512,13 +541,13 @@ ipcMain.handle('ai:transcribe', async (_e, project: Project, range?: { start: nu
       words: s.words?.map(w => ({ ...w, s: w.s + offset, e: Math.min(w.e + offset, total) })),
     }));
   } finally {
+    transcribeJobs.delete(id);
     try { unlinkSync(out); } catch { /* ок */ }
   }
 });
 
 // Распознавание речи одного файла для монтажа через текст. Длинные записи идут кусками по 10 минут,
 // чтобы не упереться в ограничение сервиса на размер файла.
-const transcribeJobs = new Map<string, AbortController>();
 ipcMain.handle('ai:transcribe-media-cancel', (_e, jobId: string) => transcribeJobs.get(jobId)?.abort());
 ipcMain.handle('ai:transcribe-media', async (_e, jobId: string, path: string, duration: number, language?: string) => {
   const ctrl = new AbortController();
@@ -527,6 +556,12 @@ ipcMain.handle('ai:transcribe-media', async (_e, jobId: string, path: string, du
   const parts = Math.max(1, Math.ceil(duration / step - 1e-6));
   const words: { s: number; e: number; w: string }[] = [];
   try {
+    // на компьютере файл распознаётся целиком: нейросеть сама идёт по нему кусками и не ограничена размером
+    if (speechIsLocal()) {
+      const segs = await localTranscribe(path, language || getSettings().ai.speechLanguage, p => notify('ai:transcribe-progress', { jobId, progress: p }), ctrl.signal);
+      for (const seg of segs) for (const w of seg.words || []) words.push({ s: +w.s.toFixed(3), e: +Math.min(w.e, duration).toFixed(3), w: w.w });
+      return words;
+    }
     for (let i = 0; i < parts; i++) {
       if (ctrl.signal.aborted) throw new Error('Отменено');
       notify('ai:transcribe-progress', { jobId, progress: i / parts });
@@ -576,6 +611,17 @@ ipcMain.handle('ai:complete', (_e, system: string, user: string) => complete(sys
 // ── Обработка клипов, звук, запись экрана, обновления ──
 ipcMain.handle('media:process', (_e, jobId: string, kind: ProcessKind, path: string, from: number, to: number, opts?: ProcessOpts) =>
   processClip(jobId, kind, path, from, to, p => notify('media:process-progress', { jobId, progress: p }), opts));
+
+// ── 1.0: нейросети на компьютере ──
+ipcMain.handle('local:info', () => localModelsInfo());
+ipcMain.handle('local:download', (_e, jobId: string, id) => downloadModel(jobId, id, (p, text) => notify('local:progress', { jobId, progress: p, text })));
+ipcMain.handle('local:download-cancel', (_e, jobId: string) => cancelDownload(jobId));
+ipcMain.handle('local:delete', (_e, id) => deleteModel(id));
+ipcMain.handle('local:separate', (_e, jobId: string, path: string, from: number, to: number, quality: 'fast' | 'best') =>
+  localSeparate(jobId, path, from, to, quality, p => notify('media:process-progress', { jobId, progress: p })));
+ipcMain.handle('local:separate-cancel', (_e, jobId: string) => cancelSeparate(jobId));
+ipcMain.handle('ai:speech-local', () => speechIsLocal());
+app.on('before-quit', () => stopWorker());
 
 // ── 0.9: отчёты об ошибках ──
 ipcMain.handle('crash:list', () => ({ reports: listReports(), unclean: crashState.unclean, dir: reportsDir() }));
@@ -627,9 +673,27 @@ ipcMain.handle('media:preflight', async (_e, jobId: string, project: Project, te
   const total = projectDuration(project);
   const w = Math.max(2, Math.round(Math.min(480, project.width) / 2) * 2);
   const h = Math.max(2, Math.round((w * project.height) / Math.max(1, project.width) / 2) * 2);
-  const res = await runExport(jobId, project, texts, {
-    outPath: join(tempDir(), jobId + '.mp4'), format: 'mp4', width: w, height: h, fps: Math.min(15, project.fps), quality: 'draft', encoder: 'cpu',
-  }, p => notify('media:process-progress', { jobId, progress: p }), args => {
+  const small = { outPath: join(tempDir(), jobId + '.mp4'), format: 'mp4' as const, width: w, height: h, fps: Math.min(15, project.fps), quality: 'draft' as const, encoder: 'cpu' as const };
+  if (inputLoad(project, texts) > MAX_INPUTS) {
+    // тяжёлый проект: сначала маленькая копия по частям, потом смотрим её одним проходом
+    try {
+      const made = await runExport(jobId, project, texts, small, p => notify('media:process-progress', { jobId, progress: p * 0.8 }));
+      if (!made.ok) throw new Error(made.canceled ? 'Отменено' : made.error || 'Проверка не удалась');
+      const ctrl = new AbortController();
+      jobs.set(jobId, ctrl);
+      const r = await run(FFMPEG, ['-hide_banner', '-nostdin', '-progress', 'pipe:1', '-nostats', '-i', small.outPath, '-filter_complex',
+        '[0:v]blackdetect=d=0.4:pix_th=0.08,freezedetect=n=-60dB:d=3[pfv];[0:a]silencedetect=n=-50dB:d=3,ebur128=peak=true[pfa]', '-map', '[pfv]', '-map', '[pfa]', '-f', 'null', '-'], {
+        signal: ctrl.signal,
+        onStdout: o => { const m = [...o.matchAll(/out_time_us=(\d+)/g)].pop(); if (m) notify('media:process-progress', { jobId, progress: 0.8 + 0.2 * Math.min(1, Number(m[1]) / 1e6 / Math.max(0.1, total)) }); },
+      });
+      jobs.delete(jobId);
+      if (ctrl.signal.aborted) throw new Error('Отменено');
+      return parseAnalysis(r.stderr, total);
+    } finally {
+      try { unlinkSync(small.outPath); } catch { /* нет файла */ }
+    }
+  }
+  const res = await runExport(jobId, project, texts, small, p => notify('media:process-progress', { jobId, progress: p }), args => {
     const fi = args.indexOf('-filter_complex');
     const maps = args.map((a, i) => (a === '-map' ? args[i + 1] : '')).filter(Boolean);
     const [v, a] = maps;
@@ -648,7 +712,18 @@ ipcMain.handle('nobg:write', (_e, jobId: string, masks: Uint8Array) => bgWrite(j
 ipcMain.handle('nobg:finish', (_e, jobId: string) => bgFinish(jobId, p => notify('media:process-progress', { jobId, progress: p })));
 ipcMain.handle('nobg:cancel', (_e, jobId: string) => { cancelProcess(jobId); bgCleanup(jobId); });
 ipcMain.handle('audio:snippet', (_e, project: Project, start: number, end: number) => audioSnippet(project, start, end));
-ipcMain.handle('audio:loudness', (_e, project: Project) => measureLoudness(project));
+ipcMain.handle('audio:loudness', async (_e, project: Project) => {
+  if (inputLoad(project, []) <= MAX_INPUTS) return measureLoudness(project);
+  // тяжёлый проект: сначала сводим звук по частям в файл, потом меряем его
+  const out = join(tempDir(), `loud_${Date.now()}.wav`);
+  try {
+    const res = await runExport('l' + Date.now(), project, [], { outPath: out, format: 'wav', width: project.width, height: project.height, fps: project.fps, quality: 'draft', encoder: 'cpu' });
+    if (!res.ok) throw new Error('Не удалось измерить громкость: ' + res.error);
+    return await measureLoudnessFile(out);
+  } finally {
+    try { unlinkSync(out); } catch { /* нет файла */ }
+  }
+});
 ipcMain.handle('screen:sources', async () => {
   const list = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 } });
   return list.filter(s => !/^Кадр$|^Kadr$/.test(s.name)).map(s => ({ id: s.id, name: s.id.startsWith('screen') ? (list.filter(x => x.id.startsWith('screen')).length > 1 ? s.name : 'Весь экран') : s.name, screen: s.id.startsWith('screen'), thumb: s.thumbnail.toDataURL() }));

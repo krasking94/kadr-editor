@@ -134,6 +134,7 @@ export interface ObjectTrack {
 // Слой (текст, картинка) повторяет движение объекта из клипа clipId
 export interface Follow {
   clipId: string;
+  baked?: boolean; // путь уже рассчитан заранее (сохранение по частям) — пересчитывать не нужно
 }
 
 export interface CamRef {

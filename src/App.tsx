@@ -13,6 +13,7 @@ import { loadSettings, watchSystemTheme } from './state/settings-actions';
 import { handleKey } from './lib/commands';
 import { loadFonts } from './lib/fonts';
 import { MenuHost } from './components/ui';
+import { TipHost } from './components/TipHost';
 import { Welcome } from './components/Welcome';
 import { Editor } from './components/Editor';
 import { Toasts } from './components/Toasts';
@@ -21,6 +22,7 @@ import { ExportDialog } from './components/ExportDialog';
 import { SettingsDialog } from './components/SettingsDialog';
 import { CommandPalette } from './components/CommandPalette';
 import { ShortcutsDialog } from './components/ShortcutsDialog';
+import { HelpDialog } from './components/HelpDialog';
 import { CrashNotice, DraftDialog, MulticamDialog, PreflightDialog, PublishDialog } from './components/V09Dialogs';
 import { Prompter } from './components/Prompter';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -61,14 +63,25 @@ export function App() {
     return () => window.removeEventListener('keydown', h);
   }, []);
 
-  // Автосохранение: копия проекта на случай сбоя или выключения света
+  // Автосохранение: копия проекта на случай сбоя или выключения света. Пишется через 15 секунд
+  // после последней правки (чтобы не потерять даже свежую работу) и не реже, чем раз в autosaveMinutes.
   useEffect(() => {
     if (!autosaveMinutes) return;
-    const t = setInterval(() => {
+    let lastSaved: unknown = null;
+    let quick = 0;
+    const save = () => {
       const s = get();
-      if (s.project && s.dirty) api.autosave(s.project, s.savedPath).catch(() => undefined);
-    }, autosaveMinutes * 60_000);
-    return () => clearInterval(t);
+      if (!s.project || !s.dirty || s.project === lastSaved) return;
+      lastSaved = s.project;
+      api.autosave(s.project, s.savedPath).catch(() => undefined);
+    };
+    const t = setInterval(save, autosaveMinutes * 60_000);
+    const off = useStore.subscribe((s, prev) => {
+      if (s.project === prev.project || !s.dirty) return;
+      clearTimeout(quick);
+      quick = window.setTimeout(save, 15_000);
+    });
+    return () => { clearInterval(t); clearTimeout(quick); off(); };
   }, [autosaveMinutes]);
 
   // Ctrl+V: картинка, скриншот, файлы или ссылка из буфера обмена, иначе — скопированные клипы
@@ -126,6 +139,7 @@ export function App() {
       {dialog === 'settings' && <SettingsDialog />}
       {dialog === 'palette' && <CommandPalette />}
       {dialog === 'shortcuts' && <ShortcutsDialog />}
+      {dialog === 'help' && <HelpDialog />}
       {dialog === 'cover' && <CoverDialog />}
       {dialog === 'preflight' && <PreflightDialog />}
       {dialog === 'publish' && <PublishDialog />}
@@ -137,6 +151,7 @@ export function App() {
       <Tour />
       <Toasts />
       <MenuHost />
+      <TipHost />
       {dragging && (
         <div className="drop-overlay">
           <div><FilePlus2 size={40} />Отпустите, чтобы добавить файлы<small style={{ fontWeight: 400, opacity: .8 }}>Видео, фото, музыка или проект .kadr</small></div>
