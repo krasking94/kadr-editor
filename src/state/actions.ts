@@ -46,6 +46,23 @@ export async function openProjectFile(path?: string) {
   }
 }
 
+export interface AutosaveInfo { id: string; name: string; savedAt: number; savedPath: string | null; file: string }
+
+/** Открыть автосохранённую копию (после сбоя или если проект закрыли без сохранения) */
+export async function restoreAutosave(a: AutosaveInfo): Promise<boolean> {
+  if (!(await confirmDiscard())) return false;
+  try {
+    const d = await api.readAutosave(a.file);
+    for (const m of d.project.media) m.missing = !(await api.exists(m.path));
+    await loadProject(d.project, d.savedPath, true);
+    toast('success', `Работа «${a.name}» восстановлена`, { detail: 'Не забудьте сохранить проект (Ctrl+S).' });
+    return true;
+  } catch (e) {
+    toast('error', 'Не удалось восстановить', { detail: String((e as Error)?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') });
+    return false;
+  }
+}
+
 export async function saveProject(saveAs = false): Promise<boolean> {
   const s = get();
   if (!s.project) return false;
@@ -829,13 +846,17 @@ export async function transcribeProject(o: { clipId?: string; addSubs?: boolean;
 }
 
 // ── Масштаб таймлайна ────────────────────────────────
+// пикселей на секунду: от «час в одном экране» до отдельных кадров
+export const ZOOM_MIN = 0.25, ZOOM_MAX = 600;
+export const clampZoom = (z: number) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+
 export function fitZoom() {
   const p = get().project;
   if (!p) return;
   const dur = Math.max(5, projectDuration(p) * 1.05);
   const el = document.querySelector('.tl-scroll') as HTMLElement | null;
   const width = Math.max(300, (el?.clientWidth ?? window.innerWidth - 700) - 40);
-  set({ zoom: Math.max(4, Math.min(400, width / dur)) });
+  set({ zoom: clampZoom(Math.min(400, width / dur)) });
   if (el) el.scrollLeft = 0;
 }
 

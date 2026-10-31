@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import type { Project, RampPoint } from '../shared/types';
 import { rampDuration, rampFilterGraph } from '../shared/ramp';
 import { buildExportArgs, ffPath } from '../shared/export-graph';
+import { inputLoad, MAX_INPUTS, narrowToRange } from '../shared/export-parts';
 import { FFMPEG, run } from './ffmpeg';
 
 export type ProcessKind = 'stabilize' | 'reverse' | 'ramp';
@@ -105,6 +106,9 @@ export async function audioSnippet(project: Project, start: number, end: number)
   const dir = join(tmpdir(), 'kadr');
   mkdirSync(dir, { recursive: true });
   const out = join(dir, `snip_${Date.now()}.wav`);
+  // в тяжёлом проекте (сотни кусков) берём только ту часть, где лежит отрывок
+  const near = inputLoad(project, []) > MAX_INPUTS ? narrowToRange(project, [], start, end) : null;
+  if (near) { project = near.project; start -= near.offset; end -= near.offset; }
   const plan = buildExportArgs(project, [], { outPath: out, format: 'wav', width: project.width, height: project.height, fps: project.fps, quality: 'draft', encoder: 'cpu', rangeStart: start, rangeEnd: end });
   const r = await run(FFMPEG, plan.args);
   if (r.code !== 0 || !existsSync(out)) throw new Error('Не удалось подготовить отрывок');
@@ -124,8 +128,16 @@ export async function measureLoudness(project: Project): Promise<{ lufs: number;
   const lbl = args[mapIdx + 1].replace(/[[\]]/g, '');
   args[fi + 1] += `;[${lbl}]ebur128=peak=true[meas]`;
   args[mapIdx + 1] = '[meas]';
-  const r = await run(FFMPEG, args);
-  const tail = r.stderr.slice(r.stderr.lastIndexOf('Summary:'));
+  return parseLoudness((await run(FFMPEG, args)).stderr);
+}
+
+/** Громкость готового звукового файла (для тяжёлых проектов звук сначала сводится по частям) */
+export async function measureLoudnessFile(path: string): Promise<{ lufs: number; peak: number; lra: number }> {
+  return parseLoudness((await run(FFMPEG, ['-hide_banner', '-nostdin', '-i', path, '-af', 'ebur128=peak=true', '-f', 'null', '-'])).stderr);
+}
+
+function parseLoudness(stderr: string): { lufs: number; peak: number; lra: number } {
+  const tail = stderr.slice(stderr.lastIndexOf('Summary:'));
   const num = (re: RegExp) => { const m = tail.match(re); return m ? Number(m[1]) : NaN; };
   const lufs = num(/I:\s+(-?[\d.]+) LUFS/), peak = num(/Peak:\s+(-?[\d.]+) dBFS/), lra = num(/LRA:\s+(-?[\d.]+) LU/);
   if (!isFinite(lufs)) throw new Error('Не удалось измерить громкость');

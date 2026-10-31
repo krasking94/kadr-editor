@@ -28,8 +28,8 @@ type Drag =
   | { kind: 'scrub' };
 
 function niceStep(zoom: number): number {
-  const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200];
-  return steps.find(s => s * zoom >= 80) ?? 1200;
+  const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600];
+  return steps.find(s => s * zoom >= 80) ?? 3600;
 }
 
 export function Timeline() {
@@ -309,7 +309,7 @@ export function Timeline() {
     if (!e.ctrlKey) return;
     const el = scrollRef.current!;
     const t = timeAt(e.clientX);
-    const nz = Math.max(4, Math.min(600, zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    const nz = A.clampZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
     set({ zoom: nz });
     requestAnimationFrame(() => { el.scrollLeft = t * nz - (e.clientX - el.getBoundingClientRect().left); });
   };
@@ -407,7 +407,7 @@ export function Timeline() {
     ], e.clientX, e.clientY);
   };
 
-  const zoomSlider = Math.log(zoom / 4) / Math.log(150);
+  const zoomSlider = Math.log(zoom / A.ZOOM_MIN) / Math.log(A.ZOOM_MAX / A.ZOOM_MIN);
   const moveDrag = drag?.kind === 'move' && drag.moved ? drag : null;
   const snapAt = drag && drag.kind !== 'scrub' ? drag.snap : undefined;
   const empty = !project.tracks.some(t => t.clips.length);
@@ -434,10 +434,10 @@ export function Timeline() {
         ], e.clientX, e.clientY)}><Plus size={14} /> Дорожка</button>
         <div className="spacer" />
         {tool === 'razor' && <span className="badge" style={{ color: 'var(--bad)', borderColor: 'var(--bad)' }}>Режим ножниц · Esc — выйти</span>}
-        <button className="icon-btn" onClick={() => set({ zoom: Math.max(4, zoom / 1.4) })} data-tip={'Отдалить\n−  или  Ctrl + колесо'}><ZoomOut size={16} /></button>
+        <button className="icon-btn" onClick={() => set({ zoom: A.clampZoom(zoom / 1.4) })} data-tip={'Отдалить\n−  или  Ctrl + колесо'}><ZoomOut size={16} /></button>
         <input type="range" min={0} max={1} step={0.001} value={zoomSlider} style={{ width: 110, ['--fill' as string]: `${zoomSlider * 100}%` }}
-          onChange={e => set({ zoom: 4 * Math.pow(150, Number(e.target.value)) })} data-tip="Масштаб таймлайна" />
-        <button className="icon-btn" onClick={() => set({ zoom: Math.min(600, zoom * 1.4) })} data-tip={'Приблизить\n='}><ZoomIn size={16} /></button>
+          onChange={e => set({ zoom: A.ZOOM_MIN * Math.pow(A.ZOOM_MAX / A.ZOOM_MIN, Number(e.target.value)) })} data-tip="Масштаб таймлайна" />
+        <button className="icon-btn" onClick={() => set({ zoom: A.clampZoom(zoom * 1.4) })} data-tip={'Приблизить\n='}><ZoomIn size={16} /></button>
         <button className="icon-btn" onClick={A.fitZoom} data-tip={'Показать весь ролик\nShift+Z'}><Maximize2 size={15} /></button>
       </div>
       <div className="tl-body">

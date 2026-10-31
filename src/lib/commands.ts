@@ -46,7 +46,7 @@ function editPoints(): number[] {
 }
 
 function zoomBy(k: number) {
-  set(s => ({ zoom: Math.max(4, Math.min(600, s.zoom * k)) }));
+  set(s => ({ zoom: A.clampZoom(s.zoom * k) }));
 }
 
 export const COMMANDS: Command[] = [

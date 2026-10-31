@@ -2,7 +2,8 @@
 // claude_desktop_config.json сервера, который запускает встроенный переходник (mcp-bridge.js).
 import { app } from 'electron';
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { writeFileAtomic } from './safe-write';
 import { dirname, join } from 'node:path';
 
 export const bridgePath = () => (app.isPackaged ? join(process.resourcesPath, 'mcp-bridge.js') : join(__dirname, 'mcp-bridge.js'));
@@ -75,8 +76,7 @@ export function connectClaudeDesktop(port: number): { ok: boolean; files: string
     cfg.mcpServers = { ...servers, [SERVER_KEY]: desktopEntry(port) };
     try {
       mkdirSync(dirname(file), { recursive: true });
-      if (existsSync(file)) copyFileSync(file, file + '.bak');
-      writeFileSync(file, JSON.stringify(cfg, null, 2), 'utf8');
+      writeFileAtomic(file, JSON.stringify(cfg, null, 2), { backup: true });
       files.push(file);
     } catch (e) {
       return { ok: false, files, error: `Не удалось записать ${file}: ${String(e)}` };

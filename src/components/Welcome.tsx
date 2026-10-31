@@ -3,12 +3,12 @@ import { useEffect, useState } from 'react';
 import { Captions, Clapperboard, FolderOpen, History, Keyboard, Layers, Plug, Settings, Sparkles, Undo2, Wand2, X, ScrollText, Smartphone, AppWindow, Diamond, Mic2, ScanFace, WandSparkles, Send, Video, Crosshair } from 'lucide-react';
 import { api } from '../api';
 import { FORMAT_PRESETS } from '../../shared/timeline';
-import { set, toast, useStore } from '../state/store';
-import { loadProject, openNewProject, openProjectFile, openSampleProject } from '../state/actions';
+import { set, useStore } from '../state/store';
+import { openNewProject, openProjectFile, openSampleProject, restoreAutosave, type AutosaveInfo } from '../state/actions';
 import { loadSettings } from '../state/settings-actions';
 import { Logo } from './Logo';
 
-interface Autosave { id: string; name: string; savedAt: number; savedPath: string | null; file: string }
+type Autosave = AutosaveInfo;
 
 const FEATURES = [
   { icon: WandSparkles, title: 'Собери ролик сам', text: 'Отдайте сырые записи и скажите, что нужно, — нейросеть соберёт черновик с субтитрами и музыкой.' },
@@ -46,16 +46,7 @@ export function Welcome() {
 
   useEffect(() => { api.autosaves().then(setAutosaves).catch(() => undefined); loadSettings(); }, []);
 
-  const restore = async (a: Autosave) => {
-    try {
-      const d = await api.readAutosave(a.file);
-      for (const m of d.project.media) m.missing = !(await api.exists(m.path));
-      await loadProject(d.project, d.savedPath, true);
-      toast('success', `Работа «${a.name}» восстановлена`, { detail: 'Не забудьте сохранить проект (Ctrl+S).' });
-    } catch (e) {
-      toast('error', 'Не удалось восстановить', { detail: String(e) });
-    }
-  };
+  const restore = (a: Autosave) => restoreAutosave(a);
 
   return (
     <div className="welcome">

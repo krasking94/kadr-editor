@@ -1,7 +1,7 @@
 // Окна, появившиеся в 0.9: проверка перед публикацией, публикация, «собери ролик сам»,
 // мультикамера и сообщение об ошибке с прошлого запуска.
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Bug, CheckCircle2, Clapperboard, Copy, Eye, FileVideo, Info, Loader2, Send, ShieldCheck, Sparkles, Video, Wand2, X, XCircle } from 'lucide-react';
+import { AlertTriangle, Bug, History, CheckCircle2, Clapperboard, Copy, Eye, FileVideo, Info, Loader2, Send, ShieldCheck, Sparkles, Video, Wand2, X, XCircle } from 'lucide-react';
 import { api, mediaUrl } from '../api';
 import { formatTime } from '../../shared/timeline';
 import { defaultPublish } from '../../shared/settings';
@@ -13,6 +13,7 @@ import { cancelDraft, runDraft, useDraft, type DraftOptions } from '../state/dra
 import { createMulticam, MAX_ANGLES } from '../state/multicam';
 import { copyReports, freshReports, sendReports, useCrash } from '../state/crash';
 import { makeCover } from '../lib/cover';
+import { restoreAutosave, type AutosaveInfo } from '../state/actions';
 import { aiReady } from '../state/script';
 import { Modal, Segmented, Switch } from './ui';
 
@@ -313,19 +314,28 @@ export function MulticamDialog() {
 export function CrashNotice() {
   const st = useCrash();
   const url = useStore(s => s.settings.reports?.url);
+  const projectId = useStore(s => s.project?.id);
+  const [saved, setSaved] = useState<AutosaveInfo | null>(null);
   const fresh = freshReports(st);
-  if (!st.loaded || st.dismissed || (!fresh.length && !st.unclean)) return null;
+  const show = st.loaded && !st.dismissed && (fresh.length > 0 || st.unclean);
+  useEffect(() => { if (show && st.unclean) api.autosaves().then((a: AutosaveInfo[]) => setSaved(a[0] || null)).catch(() => undefined); }, [show, st.unclean]);
+  if (!show) return null;
   const hide = () => useCrash.setState({ dismissed: true });
+  const canRestore = saved && saved.id !== projectId;
   return (
     <div className="crash-notice">
       <Bug size={18} color="var(--warn)" style={{ flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <b>{st.unclean ? 'В прошлый раз программа закрылась неожиданно' : 'В прошлый раз что-то пошло не так'}</b>
-        <div className="small-text muted">Проект сохранялся автоматически — его можно открыть из «Последних». {fresh.length ? 'Отчёт об ошибке готов: отправьте его разработчику, и её исправят быстрее. Ваших видео и ключей в нём нет.' : ''}</div>
-        {fresh.length > 0 && (
+        <div className="small-text muted">
+          {canRestore ? `Работа «${saved.name}» сохранилась автоматически ${ago(saved.savedAt)} — её можно восстановить. ` : st.unclean && !saved ? 'Несохранённой работы не нашлось. ' : ''}
+          {fresh.length ? 'Отчёт об ошибке готов: отправьте его разработчику, и её исправят быстрее. Ваших видео и ключей в нём нет.' : ''}
+        </div>
+        {(fresh.length > 0 || canRestore) && (
           <div className="row wrap" style={{ marginTop: 6 }}>
-            {url && <button className="btn small primary" onClick={() => { sendReports(fresh.map(r => r.id)); hide(); }}><Send size={13} /> Отправить отчёт</button>}
-            <button className="btn small" onClick={() => copyReports(fresh.map(r => r.id))}><Copy size={13} /> Скопировать отчёт</button>
+            {canRestore && <button className="btn small primary" onClick={async () => { if (await restoreAutosave(saved)) hide(); }}><History size={13} /> Восстановить работу</button>}
+            {fresh.length > 0 && url && <button className={'btn small' + (canRestore ? '' : ' primary')} onClick={() => { sendReports(fresh.map(r => r.id)); hide(); }}><Send size={13} /> Отправить отчёт</button>}
+            {fresh.length > 0 && <button className="btn small" onClick={() => copyReports(fresh.map(r => r.id))}><Copy size={13} /> Скопировать отчёт</button>}
           </div>
         )}
       </div>
@@ -333,3 +343,8 @@ export function CrashNotice() {
     </div>
   );
 }
+
+const ago = (t: number) => {
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? 'только что' : m < 60 ? `${m} мин назад` : m < 60 * 24 ? `${Math.round(m / 60)} ч назад` : new Date(t).toLocaleDateString('ru-RU');
+};
