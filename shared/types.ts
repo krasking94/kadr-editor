@@ -44,6 +44,19 @@ export interface ColorSettings {
   gamma: number; // 0.1..3, 1 = как есть
   temperature: number; // -1 (холоднее) .. 1 (теплее)
   lut?: string; // путь к файлу .cube — готовый «цветовой рецепт»
+  wheels?: ColorWheels; // цветовые круги: оттенок отдельно для теней, середины и светов
+}
+
+// Цветовой круг: в какую сторону (оттенок, градусы) и насколько (0..1) сдвинуть цвет
+export interface Wheel {
+  hue: number;
+  amount: number;
+}
+
+export interface ColorWheels {
+  shadows: Wheel;
+  midtones: Wheel;
+  highlights: Wheel;
 }
 
 export type ColorPreset =
@@ -97,6 +110,39 @@ export interface MediaClip {
   path?: PathPoint[]; // движение центра слоя по точкам (слежение за лицом), время от начала клипа
   keys?: Keyframe[]; // ключевые кадры (если есть, заменяют transform/animate)
   origin?: ClipOrigin; // клип сделан из обработанной копии файла (стабилизация, задом наперёд)
+  // с 0.7
+  blend?: BlendMode; // как слой смешивается с тем, что под ним (только дорожки наложения)
+  adjust?: boolean; // корректирующий слой: своего изображения нет, цвет и эффекты применяются ко всему, что ниже
+  crop?: Crop; // обрезка краёв кадра, доли исходника
+  mask?: MaskShape; // форма слоя
+  smooth?: boolean; // плавное замедление: программа дорисовывает недостающие кадры
+  faces?: FaceBlur; // размытие лиц
+  eq?: AudioEq; // эквалайзер и компрессор
+}
+
+export type BlendMode = 'normal' | 'screen' | 'multiply' | 'overlay' | 'softlight' | 'lighten' | 'darken' | 'difference' | 'add';
+
+export type MaskShape = 'none' | 'rounded' | 'ellipse' | 'circle';
+
+export interface Crop {
+  l: number; // сколько срезать слева, доля ширины (0..0.9)
+  r: number;
+  t: number; // сверху, доля высоты
+  b: number;
+}
+
+export interface FaceBlur {
+  strength: number; // 0..1
+  // найденные лица по времени исходника: рамки [x, y, w, h] в долях кадра исходника
+  samples: { t: number; boxes: [number, number, number, number][] }[];
+  step: number; // через сколько секунд исходника идут образцы
+}
+
+export interface AudioEq {
+  low: number; // басы, дБ (−12..12)
+  mid: number; // середина, дБ
+  high: number; // верха, дБ
+  comp: number; // компрессор 0..1: выравнивает громкость (0 — выключен)
 }
 
 // Ключевой кадр: состояние слоя в момент t (секунды от начала клипа на таймлайне)
@@ -178,6 +224,7 @@ export interface Track {
   muted: boolean;
   locked: boolean;
   hidden: boolean;
+  volume?: number; // громкость всей дорожки 0..2 (микшер), по умолчанию 1
   clips: Clip[];
 }
 
